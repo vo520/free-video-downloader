@@ -31,7 +31,11 @@ def _build_user_response(user: dict) -> dict:
     vip_expire_at = None
     if user.get("is_vip") and user.get("vip_expire_at"):
         try:
-            expire = datetime.fromisoformat(user["vip_expire_at"])
+            expire_str = user["vip_expire_at"]
+            if "+" in expire_str or "Z" in expire_str:
+                expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
+            else:
+                expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
             is_vip = expire > datetime.now(timezone.utc)
             vip_expire_at = user["vip_expire_at"]
         except ValueError:

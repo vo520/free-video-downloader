@@ -58,7 +58,25 @@ class VideoDownloader:
             "no_warnings": True,
             "extract_flat": False,
             "noplaylist": True,
+            "nocheckcertificate": True,
+            "nocheckhostname": True,
+            "extractor_retries": 3,
+            "fragment_retries": 3,
+            "skip_unavailable_fragments": False,
+            "ignoreerrors": False,
         }
+        
+        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ydl_opts["http_headers"] = {
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
@@ -159,6 +177,13 @@ class VideoDownloader:
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
+            "nocheckcertificate": True,
+            "nocheckhostname": True,
+        }
+        
+        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ydl_opts["http_headers"] = {
+            "User-Agent": user_agent,
         }
 
         if self.has_ffmpeg:
@@ -202,6 +227,13 @@ class VideoDownloader:
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
+            "nocheckcertificate": True,
+            "nocheckhostname": True,
+        }
+        
+        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ydl_opts["http_headers"] = {
+            "User-Agent": user_agent,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

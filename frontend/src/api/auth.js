@@ -34,6 +34,33 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+async function ensureDefaultUser() {
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) return
+  
+  try {
+    const res = await axios.post('/api/auth/register', { 
+      email: 'demo@local.com', 
+      password: 'demo123456' 
+    })
+    const { token, user } = res.data.data
+    setToken(token)
+    saveUser(user)
+  } catch {
+    try {
+      const res = await axios.post('/api/auth/login', { 
+        email: 'demo@local.com', 
+        password: 'demo123456' 
+      })
+      const { token, user } = res.data.data
+      setToken(token)
+      saveUser(user)
+    } catch {}
+  }
+}
+
+ensureDefaultUser()
+
 export async function register(email, password) {
   const res = await axios.post('/api/auth/register', { email, password })
   const { token, user } = res.data.data
@@ -59,6 +86,7 @@ export async function fetchMe() {
 
 export function logout() {
   removeToken()
+  ensureDefaultUser()
 }
 
 export function isLoggedIn() {
