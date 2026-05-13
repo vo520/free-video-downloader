@@ -15,6 +15,27 @@ def _is_bilibili_url(url: str) -> bool:
     return "bilibili.com" in url or "b23.tv" in url
 
 
+def _is_douyin_url(url: str) -> bool:
+    """判断是否为抖音链接"""
+    douyin_domains = ["douyin.com", "iesdouyin.com", "v.douyin.com"]
+    return any(d in url for d in douyin_domains)
+
+
+def _parse_douyin_video_info(url: str) -> dict:
+    """解析抖音视频基本信息，返回 desc 标题作为替代内容"""
+    try:
+        from douyin import DouyinParser
+        douyin_parser = DouyinParser()
+        result = douyin_parser.parse(url)
+        desc = result.get("description", "")
+        video_id = result.get("id", "")
+        if desc:
+            return {"desc": desc, "video_id": video_id}
+    except Exception as e:
+        print(f"解析抖音视频信息失败: {e}")
+    return None
+
+
 class SubtitleExtractor:
     """从视频 URL 提取平台字幕（人工字幕 > 自动字幕）"""
 
@@ -32,6 +53,25 @@ class SubtitleExtractor:
             "full_text": str
         }
         """
+        # 抖音视频不支持字幕提取，但可以获取视频描述作为替代内容
+        if _is_douyin_url(url):
+            video_info = _parse_douyin_video_info(url)
+            if video_info and video_info.get("desc"):
+                return {
+                    "has_subtitle": True,
+                    "language": "zh",
+                    "subtitle_type": "auto",
+                    "segments": [{"start": 0, "end": 10, "text": video_info["desc"]}],
+                    "full_text": video_info["desc"]
+                }
+            return {
+                "has_subtitle": False,
+                "language": "",
+                "subtitle_type": "none",
+                "segments": [],
+                "full_text": ""
+            }
+
         if _is_bilibili_url(url):
             result = self._extract_bilibili(url)
             if result["has_subtitle"]:
@@ -278,31 +318,53 @@ class SubtitleExtractor:
 
 
 class VideoSummarizer:
-    """使用 DeepSeek API 生成视频总结、思维导图、问答"""
+    """使用 MiniMax API 生成视频总结、思维导图、问答"""
 
     def __init__(self):
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        api_key = os.getenv("MINIMAX_API_KEY", "")
         if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY 环境变量未设置")
+            raise ValueError("MINIMAX_API_KEY 环境变量未设置")
         self.client = OpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url="https://api.minimaxi.com/v1",
         )
-        self.model = "deepseek-chat"
+        self.model = "MiniMax-M2.7"
+        self.max_retries = 3
+        self.retry_delay = 2
+
+    def _retry_on_overload(self, func, *args, **kwargs):
+        """重试机制，处理 529 负载过高错误"""
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                error_str = str(e)
+                if "529" in error_str or "overloaded" in error_str.lower():
+                    last_error = e
+                    time.sleep(self.retry_delay * (attempt + 1))
+                    continue
+                raise
+        raise last_error
 
     def summarize_stream(self, subtitle_text: str, language: str = "zh"):
         """流式生成视频总结，yield 每个 token"""
         prompt = self._build_summary_prompt(subtitle_text, language)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的视频内容分析助手，擅长提取关键信息并生成结构化的总结。"},
-                {"role": "user", "content": prompt},
-            ],
-            stream=True,
-            temperature=0.7,
-            max_tokens=4096,
-        )
+        
+        def create_completion():
+            return self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的视频内容分析助手，擅长提取关键信息并生成结构化的总结。"},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=True,
+                temperature=0.7,
+                max_tokens=4096,
+            )
+        
+        response = self._retry_on_overload(create_completion)
+        
         for chunk in response:
             delta = chunk.choices[0].delta
             if delta.content:
@@ -311,31 +373,40 @@ class VideoSummarizer:
     def generate_mindmap(self, subtitle_text: str, language: str = "zh") -> str:
         """生成思维导图 Markdown（非流式，一次性返回）"""
         prompt = self._build_mindmap_prompt(subtitle_text, language)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的思维导图生成助手，擅长将内容组织为清晰的层级结构。"},
-                {"role": "user", "content": prompt},
-            ],
-            stream=False,
-            temperature=0.5,
-            max_tokens=4096,
-        )
+        
+        def create_completion():
+            return self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的思维导图生成助手，擅长将内容组织为清晰的层级结构。"},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False,
+                temperature=0.5,
+                max_tokens=4096,
+            )
+        
+        response = self._retry_on_overload(create_completion)
         return response.choices[0].message.content
 
     def chat_stream(self, subtitle_text: str, question: str):
         """基于视频内容的 AI 问答，流式返回"""
         prompt = self._build_chat_prompt(subtitle_text, question)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个视频内容问答助手。根据提供的视频字幕内容来回答用户的问题。如果问题超出视频内容范围，请诚实告知。"},
-                {"role": "user", "content": prompt},
-            ],
-            stream=True,
-            temperature=0.7,
-            max_tokens=2048,
-        )
+        
+        def create_completion():
+            return self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个视频内容问答助手。根据提供的视频字幕内容来回答用户的问题。如果问题超出视频内容范围，请诚实告知。"},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=True,
+                temperature=0.7,
+                max_tokens=2048,
+            )
+        
+        response = self._retry_on_overload(create_completion)
+        
         for chunk in response:
             delta = chunk.choices[0].delta
             if delta.content:

@@ -69,10 +69,14 @@ async def parse_video(req: ParseRequest):
     """解析视频信息（抖音走专用模块，其他走 yt-dlp）"""
     try:
         loop = asyncio.get_event_loop()
-        if is_douyin_url(req.url):
-            result = await loop.run_in_executor(None, douyin_parser.parse, req.url)
+        url = req.url.strip()
+        # 处理纯数字抖音 ID
+        if url.isdigit() or (url.isalnum() and len(url) > 10):
+            url = f"https://www.douyin.com/video/{url}"
+        if is_douyin_url(url):
+            result = await loop.run_in_executor(None, douyin_parser.parse, url)
         else:
-            result = await loop.run_in_executor(None, downloader.parse_video, req.url)
+            result = await loop.run_in_executor(None, downloader.parse_video, url)
         return {"success": True, "data": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail={
@@ -86,11 +90,15 @@ async def download_video(req: DownloadRequest):
     """服务端下载视频后提供文件下载（抖音走专用模块）"""
     try:
         loop = asyncio.get_event_loop()
-        if is_douyin_url(req.url):
-            result = await loop.run_in_executor(None, douyin_parser.download, req.url)
+        url = req.url.strip()
+        # 处理纯数字抖音 ID
+        if url.isdigit() or (url.isalnum() and len(url) > 10):
+            url = f"https://www.douyin.com/video/{url}"
+        if is_douyin_url(url):
+            result = await loop.run_in_executor(None, douyin_parser.download, url)
         else:
             result = await loop.run_in_executor(
-                None, downloader.download_video, req.url, req.format_id
+                None, downloader.download_video, url, req.format_id
             )
         filepath = result["filepath"]
         if not os.path.exists(filepath):

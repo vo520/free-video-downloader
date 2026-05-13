@@ -102,9 +102,16 @@ def check_and_increment_summary(user_id: int) -> tuple[bool, int]:
             return False, 0
 
         if user["is_vip"] and user["vip_expire_at"]:
-            expire = datetime.fromisoformat(user["vip_expire_at"])
-            if expire > datetime.now(timezone.utc):
-                return True, -1  # -1 means unlimited
+            try:
+                expire_str = user["vip_expire_at"]
+                if "+" in expire_str or "Z" in expire_str:
+                    expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
+                else:
+                    expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
+                if expire > datetime.now(timezone.utc):
+                    return True, -1  # -1 means unlimited
+            except ValueError:
+                pass
 
         if user["last_summary_date"] != today:
             conn.execute(
