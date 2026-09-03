@@ -4,12 +4,12 @@ import asyncio
 import json
 from collections.abc import AsyncIterable
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
 from auth import get_optional_user
-from database import check_and_increment_summary, FREE_DAILY_SUMMARY_LIMIT
+from database import check_and_increment_summary, check_summary_quota, FREE_DAILY_SUMMARY_LIMIT, add_history
 
 router = APIRouter(prefix="/api", tags=["AI 总结"])
 
@@ -17,6 +17,9 @@ router = APIRouter(prefix="/api", tags=["AI 总结"])
 class SummarizeRequest(BaseModel):
     url: str
     language: str = "zh"
+    # 供历史落地记录标题/平台（向后兼容：旧前端不传则留空）。
+    title: str = ""
+    platform: str = ""
 
 
 class ChatRequest(BaseModel):
@@ -36,7 +39,7 @@ def _check_summary_permission(user: dict | None):
     if not user:
         return False, 0, "请先登录后使用 AI 总结功能"
 
-    allowed, remaining = check_and_increment_summary(user["id"])
+    allowed, remaining = check_summary_quota(user["id"])
     if not allowed:
         return False, 0, f"今日免费 AI 总结次数已用完（每日 {FREE_DAILY_SUMMARY_LIMIT} 次），开通 VIP 可无限使用"
 
@@ -62,81 +65,154 @@ def _get_extractor():
     return _get_extractor._instance
 
 
-@router.post("/summarize", response_class=EventSourceResponse)
-async def summarize_video(req: SummarizeRequest, user: dict | None = Depends(get_optional_user)) -> AsyncIterable[ServerSentEvent]:
-    """
-    AI 视频总结（SSE 流式）
-    事件类型: subtitle / summary / mindmap / done / error / quota
-    """
+async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: Request):
+    """生成 SSE 事件流"""
     allowed, remaining, message = _check_summary_permission(user)
     if not allowed:
         yield ServerSentEvent(
-            raw_data=json.dumps({"message": message, "need_login": user is None, "need_vip": user is not None}, ensure_ascii=False),
+            data=json.dumps({"message": message, "need_login": user is None, "need_vip": user is not None}, ensure_ascii=False),
             event="error",
         )
         return
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         extractor = _get_extractor()
-        subtitle_data = await loop.run_in_executor(
-            None, extractor.extract, req.url
+        # 加超时：避免 yt-dlp 在个别站点卡死时永久占满 executor 线程导致整体夯死。
+        subtitle_data = await asyncio.wait_for(
+            loop.run_in_executor(None, extractor.extract, req.url),
+            timeout=120,
         )
 
         yield ServerSentEvent(
-            raw_data=json.dumps(subtitle_data, ensure_ascii=False),
+            data=json.dumps(subtitle_data, ensure_ascii=False),
             event="subtitle",
         )
 
         if not subtitle_data["has_subtitle"]:
             yield ServerSentEvent(
-                raw_data=json.dumps({"message": "该视频没有可用的字幕，无法生成总结"}, ensure_ascii=False),
+                data=json.dumps({"message": "该视频没有可用的字幕，无法生成总结"}, ensure_ascii=False),
                 event="error",
             )
             return
 
+        # 确认有字幕、将真正生成总结，此时才消费一次免费额度，
+        # 避免无字幕/提取失败等场景白白扣减用户免费次数。
+        _, remaining = check_and_increment_summary(user["id"])
+
         full_text = subtitle_data["full_text"]
         summarizer = _get_summarizer()
 
+        # 收集总结全文，供历史回看（token 为纯文本字符串，直接拼接）。
+        summary_text = ""
         for token in summarizer.summarize_stream(full_text, req.language):
-            yield ServerSentEvent(raw_data=json.dumps(token, ensure_ascii=False), event="summary")
+            # 客户端中途关闭/路由切走：直接停止 yield，不再继续调用 mindmap 与 add_history，
+            # 避免 LLM API 配额与算力被白白消耗；check_and_increment_summary 已消耗的不退，
+            # 避免引入新的"配额回滚"一致性复杂度（无字幕/失败扣减的设计思路一致）。
+            if await request.is_disconnected():
+                return
+            yield ServerSentEvent(data=json.dumps(token, ensure_ascii=False), event="summary")
+            summary_text += token
 
+        # mindmap 是另一次昂贵的 LLM 调用，再检测一次避免短流后客户端已断仍白做。
+        if await request.is_disconnected():
+            return
         mindmap_md = await loop.run_in_executor(
             None, summarizer.generate_mindmap, full_text, req.language
         )
+        # mindmap 调完客户端可能也已断开，最后再检一次，避免无意义的事件发送与落库。
+        if await request.is_disconnected():
+            return
         yield ServerSentEvent(
-            raw_data=json.dumps({"markdown": mindmap_md}, ensure_ascii=False),
+            data=json.dumps({"markdown": mindmap_md}, ensure_ascii=False),
             event="mindmap",
         )
 
         quota_info = {"remaining": remaining, "limit": FREE_DAILY_SUMMARY_LIMIT}
         yield ServerSentEvent(
-            raw_data=json.dumps(quota_info, ensure_ascii=False),
+            data=json.dumps(quota_info, ensure_ascii=False),
             event="quota",
         )
 
-        yield ServerSentEvent(raw_data="[DONE]", event="done")
+        yield ServerSentEvent(data="[DONE]", event="done")
+
+        # best-effort：已登录用户记录总结历史，存全文供回看；失败不影响 SSE 主流程。
+        # add_history 内部已吞异常并 warning，此处无需再包 try/except。
+        if user:
+            add_history(
+                user["id"], "summary",
+                video_url=req.url,
+                title=req.title or None,
+                platform=req.platform or None,
+                extra={"summary": summary_text, "mindmap": mindmap_md},
+            )
 
     except Exception as e:
         yield ServerSentEvent(
-            raw_data=json.dumps({"message": f"总结失败: {str(e)}"}, ensure_ascii=False),
+            data=json.dumps({"message": f"总结失败: {str(e)}"}, ensure_ascii=False),
             event="error",
         )
 
 
-@router.post("/chat", response_class=EventSourceResponse)
-async def chat_with_video(req: ChatRequest, user: dict | None = Depends(get_optional_user)) -> AsyncIterable[ServerSentEvent]:
-    """AI 视频问答（SSE 流式）"""
+@router.post("/summarize")
+async def summarize_video(
+    req: SummarizeRequest,
+    request: Request,
+    user: dict | None = Depends(get_optional_user),
+):
+    """
+    AI 视频总结（SSE 流式）
+    事件类型: subtitle / summary / mindmap / done / error / quota
+    """
+    return EventSourceResponse(_summarize_stream(req, user, request))
+
+
+async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
+    """生成聊天响应流"""
+    # C3：与 /api/summarize 一致，要求登录后再使用 AI 问答，避免匿名绕过。
+    if not user:
+        yield ServerSentEvent(
+            data=json.dumps(
+                {"message": "请先登录后使用 AI 问答功能", "need_login": True},
+                ensure_ascii=False,
+            ),
+            event="error",
+        )
+        return
+
+    # 与 /api/summarize 一致：免费用户受每日配额限制，VIP 无限。
+    # 先做权限闸门（只校验、不消耗），避免后续字幕提取已完成却因配额不足白做。
+    allowed, _, perm_message = _check_summary_permission(user)
+    if not allowed:
+        yield ServerSentEvent(
+            data=json.dumps(
+                {"message": perm_message, "need_login": False, "need_vip": True},
+                ensure_ascii=False,
+            ),
+            event="error",
+        )
+        return
+
+    # 问题为空则无需发起 AI 调用，直接提示，避免浪费配额/算力（前端已拦，后端再兜底）。
+    if not req.question or not req.question.strip():
+        yield ServerSentEvent(
+            data=json.dumps({"message": "请输入问题后再发送", "need_login": False}, ensure_ascii=False),
+            event="error",
+        )
+        return
+
     try:
         if not req.subtitle_text.strip():
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             extractor = _get_extractor()
-            subtitle_data = await loop.run_in_executor(
-                None, extractor.extract, req.url
+            # 加超时：与 summarize 一致，防止字幕提取卡死线程。
+            subtitle_data = await asyncio.wait_for(
+                loop.run_in_executor(None, extractor.extract, req.url),
+                timeout=120,
             )
             if not subtitle_data["has_subtitle"]:
                 yield ServerSentEvent(
-                    raw_data=json.dumps({"message": "该视频没有可用的字幕，无法回答问题"}, ensure_ascii=False),
+                    data=json.dumps({"message": "该视频没有可用的字幕，无法回答问题"}, ensure_ascii=False),
                     event="error",
                 )
                 return
@@ -144,14 +220,34 @@ async def chat_with_video(req: ChatRequest, user: dict | None = Depends(get_opti
         else:
             subtitle_text = req.subtitle_text
 
+        # 确认有字幕、将真正发起问答，此时才消费一次免费额度
+        # （与 summarize 一致：先校验字幕有效性，避免提取失败等场景白白扣减）。
+        _, remaining = check_and_increment_summary(user["id"])
+
         summarizer = _get_summarizer()
         for token in summarizer.chat_stream(subtitle_text, req.question):
-            yield ServerSentEvent(raw_data=json.dumps(token, ensure_ascii=False), event="answer")
+            # 客户端断连保护：与 _summarize_stream 一致，避免继续白做 LLM 调用。
+            if await request.is_disconnected():
+                return
+            yield ServerSentEvent(data=json.dumps(token, ensure_ascii=False), event="answer")
 
-        yield ServerSentEvent(raw_data="[DONE]", event="done")
+        quota_info = {"remaining": remaining, "limit": FREE_DAILY_SUMMARY_LIMIT}
+        yield ServerSentEvent(data=json.dumps(quota_info, ensure_ascii=False), event="quota")
+
+        yield ServerSentEvent(data="[DONE]", event="done")
 
     except Exception as e:
         yield ServerSentEvent(
-            raw_data=json.dumps({"message": f"回答失败: {str(e)}"}, ensure_ascii=False),
+            data=json.dumps({"message": f"回答失败: {str(e)}"}, ensure_ascii=False),
             event="error",
         )
+
+
+@router.post("/chat")
+async def chat_with_video(
+    req: ChatRequest,
+    request: Request,
+    user: dict | None = Depends(get_optional_user),
+):
+    """AI 视频问答（SSE 流式）"""
+    return EventSourceResponse(_chat_stream(req, user, request))

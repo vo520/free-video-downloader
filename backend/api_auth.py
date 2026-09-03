@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,9 +11,13 @@ from auth import (
     validate_password,
     verify_password,
 )
-from database import create_user, get_user_by_email
+from database import create_user, get_user_by_email, get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# 演示账号：登录后默认开通 VIP（一年有效期），仅作为前端体验/演示用。
+DEMO_EMAIL = "demo@local.com"
+DEMO_VIP_DURATION = timedelta(days=365)
 
 
 class RegisterRequest(BaseModel):
@@ -24,6 +28,29 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+def _ensure_demo_vip(email: str) -> None:
+    """若 email 为演示账号，则强制开通 VIP（默认一年）。
+
+    不论注册还是登录入口，都保证 demo 账号以 VIP 身份返回，避免出现 demo
+    因早期注册而被锁在普通用户态的情况。
+    """
+    if email != DEMO_EMAIL:
+        return
+    expire_at = (datetime.now(timezone.utc) + DEMO_VIP_DURATION).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET is_vip = 1, vip_expire_at = ?, updated_at = datetime('now') "
+            "WHERE email = ?",
+            (expire_at, email),
+        )
+
+
+def _user_response_for(email: str, user: dict) -> dict:
+    """读取最新 user 并构造响应。用于注册/登录后立即反映 demo VIP 写入。"""
+    fresh = get_user_by_email(email) or user
+    return _build_user_response(fresh)
 
 
 def _build_user_response(user: dict) -> dict:
@@ -58,30 +85,49 @@ async def register(req: RegisterRequest):
     if err:
         raise HTTPException(status_code=400, detail=err)
 
-    if get_user_by_email(req.email):
+    # 归一化为小写，避免 User@x.com 与 user@x.com 被当作两个账号（唯一约束冲突）。
+    email = req.email.strip().lower()
+
+    if get_user_by_email(email):
         raise HTTPException(status_code=400, detail="该邮箱已注册")
 
     hashed = hash_password(req.password)
-    user = create_user(req.email, hashed)
-    token = create_token(user["id"], req.email)
+    try:
+        user = create_user(email, hashed)
+    except Exception:
+        # 并发注册同邮箱：唯一约束兜底，避免直接 500，转为友好提示。
+        if get_user_by_email(email):
+            raise HTTPException(status_code=400, detail="该邮箱已注册")
+        raise
+
+    # 演示账号注册即默认开通 VIP，便于前端体验完整功能。
+    _ensure_demo_vip(email)
+
+    token = create_token(user["id"], email)
 
     return {
         "success": True,
         "data": {
             "token": token,
-            "user": {"id": user["id"], "email": req.email, "is_vip": False, "vip_expire_at": None},
+            "user": _user_response_for(email, user),
         },
     }
 
 
 @router.post("/login")
 async def login(req: LoginRequest):
-    user = get_user_by_email(req.email)
+    # 与注册一致归一化为小写，避免 Foo@x / foo@x 被视为两个账号导致无法登录
+    email = req.email.strip().lower()
+    user = get_user_by_email(email)
     if not user:
         raise HTTPException(status_code=400, detail="邮箱或密码错误")
 
     if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="邮箱或密码错误")
+
+    # 演示账号登录后默认开通 VIP（一年有效期），便于前端体验完整功能。
+    _ensure_demo_vip(email)
+    user = get_user_by_email(email) or user
 
     token = create_token(user["id"], user["email"])
     return {

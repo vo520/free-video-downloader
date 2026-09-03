@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: ./backend
+    container_name: fvd-backend
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    build: ./frontend
+    container_name: fvd-frontend
+    working_dir: /app
+    volumes:
+      # 源码挂载用于 vite HMR
+      - ./frontend:/app
+      # 匿名卷接管 node_modules，避免被源码挂载覆盖（容器内有完整依赖）
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_BACKEND_HOST=backend
+    depends_on:
+      - backend
+    stdin_open: true
+    tty: true

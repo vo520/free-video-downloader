@@ -1,8 +1,50 @@
 import os
 import re
 import shutil
+import threading
 import yt_dlp
 from typing import Optional
+
+
+# 下载临时目录磁盘配额：超过该值时按修改时间清理旧文件（优先删除 .part 临时文件）。
+MAX_DOWNLOAD_DIR_BYTES = 2 * 1024 * 1024 * 1024  # 2GB
+
+# 清理操作为进程内全局串行：避免并发下载请求同时执行清理，
+# 误删彼此正在写入的 .part 文件导致下载失败。
+_quota_lock = threading.Lock()
+
+
+def _enforce_quota(download_dir: str, limit: int = MAX_DOWNLOAD_DIR_BYTES) -> None:
+    """下载目录超过配额时，按修改时间从旧到新删除文件直至低于阈值。
+
+    优先删除 .part 临时文件以降低误删正在下载文件的风险；仍超限时再清理已完成文件。
+    使用进程锁保证并发下载时清理串行执行，不会误删其他请求正在进行中的 .part。
+    用于防止服务端落盘无上限导致磁盘写满。
+    """
+    with _quota_lock:
+        try:
+            entries = [
+                os.path.join(download_dir, f)
+                for f in os.listdir(download_dir)
+                if os.path.isfile(os.path.join(download_dir, f))
+            ]
+        except OSError:
+            return
+        if not entries:
+            return
+        total = sum(os.path.getsize(e) for e in entries)
+        if total <= limit:
+            return
+        # 排序键：(是否.part, mtime) —— .part 优先、更旧的优先
+        entries.sort(key=lambda e: (0 if e.endswith(".part") else 1, os.path.getmtime(e)))
+        for e in entries:
+            if total <= limit:
+                break
+            try:
+                total -= os.path.getsize(e)
+                os.remove(e)
+            except OSError:
+                pass
 
 
 def _find_ffmpeg_path() -> Optional[str]:
@@ -26,6 +68,10 @@ class VideoDownloader:
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
         self.ffmpeg_path = _find_ffmpeg_path()
         self.has_ffmpeg = self.ffmpeg_path is not None
+
+    def ensure_disk_quota(self) -> None:
+        """下载前调用：确保临时目录不超出磁盘配额。"""
+        _enforce_quota(self.DOWNLOAD_DIR)
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
@@ -58,8 +104,6 @@ class VideoDownloader:
             "no_warnings": True,
             "extract_flat": False,
             "noplaylist": True,
-            "nocheckcertificate": True,
-            "nocheckhostname": True,
             "extractor_retries": 3,
             "fragment_retries": 3,
             "skip_unavailable_fragments": False,
@@ -111,11 +155,17 @@ class VideoDownloader:
         seen = set()
         results = []
 
+        # 先收集有音频的格式
+        av_formats = []
+        v_only_formats = []
+        best_height = 0
+
         for f in raw_formats:
             vcodec = f.get("vcodec", "none")
             acodec = f.get("acodec", "none")
-            height = f.get("height")
+            height = f.get("height") or 0
             ext = f.get("ext", "mp4")
+            format_id = f.get("format_id", "")
 
             has_video = vcodec and vcodec != "none"
             has_audio = acodec and acodec != "none"
@@ -123,62 +173,131 @@ class VideoDownloader:
             if not has_video:
                 continue
 
+            if height > best_height:
+                best_height = height
+
             resolution = f"{f.get('width', '?')}x{height}" if height else "未知"
             filesize = f.get("filesize") or f.get("filesize_approx")
             size_label = self._format_filesize(filesize)
 
             if has_audio:
                 label = f"{height}p {ext.upper()} ({size_label})"
-                key = (height, ext, "av")
+                av_formats.append({
+                    "format_id": format_id,
+                    "ext": ext,
+                    "resolution": resolution,
+                    "height": height,
+                    "filesize": filesize,
+                    "filesize_approx": filesize,
+                    "vcodec": vcodec,
+                    "acodec": acodec,
+                    "has_audio": True,
+                    "label": label,
+                })
             else:
                 label = f"{height}p {ext.upper()} (仅视频, {size_label})"
-                key = (height, ext, "v")
+                v_only_formats.append({
+                    "format_id": format_id,
+                    "ext": ext,
+                    "resolution": resolution,
+                    "height": height,
+                    "filesize": filesize,
+                    "filesize_approx": filesize,
+                    "vcodec": vcodec,
+                    "acodec": None,
+                    "has_audio": False,
+                    "label": label,
+                })
 
-            if key in seen:
-                continue
+        # 按 height 去重并排序
+        av_dict = {}
+        for fmt in av_formats:
+            key = (fmt["height"], fmt["ext"])
+            if key not in av_dict:
+                av_dict[key] = fmt
+
+        v_dict = {}
+        for fmt in v_only_formats:
+            key = (fmt["height"], fmt["ext"])
+            if key not in v_dict:
+                v_dict[key] = fmt
+
+        # 优先添加有音频的格式
+        for key in sorted(av_dict.keys(), key=lambda x: x[0], reverse=True):
+            results.append(av_dict[key])
             seen.add(key)
 
-            results.append({
-                "format_id": f.get("format_id", ""),
-                "ext": ext,
-                "resolution": resolution,
-                "height": height or 0,
-                "filesize": filesize,
-                "filesize_approx": filesize,
-                "vcodec": vcodec,
-                "acodec": acodec if has_audio else None,
-                "has_audio": has_audio,
-                "label": label,
+        # 添加合并格式选项（如果没有足够的有音频格式）
+        if v_dict and not av_dict:
+            # 所有格式都是纯视频，需要合并
+            best_video = max(v_dict.values(), key=lambda x: x["height"])
+            results.insert(0, {
+                "format_id": "bestvideo+bestaudio/best",
+                "ext": "mp4",
+                "resolution": best_video["resolution"],
+                "height": best_video["height"],
+                "filesize": None,
+                "filesize_approx": None,
+                "vcodec": "merged",
+                "acodec": "merged",
+                "has_audio": True,
+                "label": f"最佳画质 {best_video['height']}p (自动合并音频)",
             })
+        elif av_dict:
+            # 已有有音频格式，但添加一个合并选项作为备选
+            best_av = max(av_dict.values(), key=lambda x: x["height"])
+            if not any("+" in f["format_id"] for f in results):
+                results.insert(0, {
+                    "format_id": "bestvideo+bestaudio/best",
+                    "ext": "mp4",
+                    "resolution": best_av["resolution"],
+                    "height": best_av["height"],
+                    "filesize": None,
+                    "filesize_approx": None,
+                    "vcodec": "merged",
+                    "acodec": "merged",
+                    "has_audio": True,
+                    "label": f"最佳画质 {best_av['height']}p (自动合并音频)",
+                })
+
+        # 提供"仅音频"选项，使前端的"仅音频"预设真正可用（yt-dlp 支持 bestaudio 选择器）
+        results.append({
+            "format_id": "bestaudio",
+            "ext": "m4a",
+            "resolution": "音频",
+            "height": 0,
+            "filesize": None,
+            "filesize_approx": None,
+            "vcodec": "none",
+            "acodec": "merged",
+            "has_audio": True,
+            "label": "仅音频 M4A (自动提取)",
+        })
 
         results.sort(key=lambda x: x["height"], reverse=True)
 
-        if not any(r["has_audio"] for r in results) and results:
-            best_video = results[0]
-            merged = {
-                **best_video,
-                "format_id": f"bestvideo+bestaudio/best",
-                "label": f"{best_video['height']}p 最佳 (视频+音频合并)",
-                "has_audio": True,
-                "acodec": "merged",
-            }
-            results.insert(0, merged)
-
-        return results[:15]
+        # 钉住"最佳画质（自动合并）"与"仅音频"两个预设项，确保即便格式很多被截断，
+        # 前端的"仅音频"预设也始终可用（避免 results[:15] 把 height=0 的音频项裁掉）。
+        _PINNED = ("bestvideo+bestaudio/best", "bestaudio")
+        pinned = [f for f in results if f["format_id"] in _PINNED]
+        rest = [f for f in results if f["format_id"] not in _PINNED]
+        return (pinned + rest)[:15]
 
     def download_video(self, url: str, format_id: str) -> dict:
         """下载视频到服务器临时目录，返回文件路径和元数据"""
         if not self.has_ffmpeg and "+" in format_id:
             format_id = "best"
 
+        # 下载前确保临时目录不超出磁盘配额（防止写满磁盘）
+        self.ensure_disk_quota()
+
         ydl_opts = {
             "format": format_id,
-            "outtmpl": os.path.join(self.DOWNLOAD_DIR, "%(title)s.%(ext)s"),
+            # 文件名含视频 id，避免不同视频同标题时相互覆盖
+            "outtmpl": os.path.join(self.DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "nocheckcertificate": True,
-            "nocheckhostname": True,
         }
         
         user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -196,28 +315,31 @@ class VideoDownloader:
         if not info:
             raise ValueError("下载失败")
 
-        title = self._sanitize_filename(info.get("title", "video"))
-        ext = info.get("ext", "mp4")
-        filename = f"{title}.{ext}"
-        filepath = os.path.join(self.DOWNLOAD_DIR, filename)
-
-        if not os.path.exists(filepath):
-            prepared = ydl.prepare_filename(info)
-            if os.path.exists(prepared):
-                filepath = prepared
-                filename = os.path.basename(prepared)
+        # 以 yt-dlp 实际落盘名为准（outtmpl 含视频 id，且与 extensions/合并后真实文件名一致），
+        # 避免用"已 sanitize 的 title.ext"去拼路径导致 os.path.exists 恒为 False、回退逻辑误命中。
+        prepared = ydl.prepare_filename(info)
+        if os.path.exists(prepared):
+            filepath = prepared
+        else:
+            # 兜底：极少数情况下合并输出名与 prepare_filename 不一致，按视频 id 在目录内定位
+            _vid = info.get("id")
+            _candidates = [
+                os.path.join(self.DOWNLOAD_DIR, f)
+                for f in os.listdir(self.DOWNLOAD_DIR)
+                if os.path.isfile(os.path.join(self.DOWNLOAD_DIR, f))
+                and _vid
+                and _vid in f
+            ]
+            if _candidates:
+                filepath = _candidates[0]
             else:
-                for f in os.listdir(self.DOWNLOAD_DIR):
-                    if title in f:
-                        filepath = os.path.join(self.DOWNLOAD_DIR, f)
-                        filename = f
-                        break
+                raise FileNotFoundError("下载完成但未找到落盘文件")
 
         return {
             "filepath": filepath,
-            "filename": filename,
+            "filename": os.path.basename(filepath),
             "title": info.get("title", "video"),
-            "ext": ext,
+            "ext": info.get("ext", "mp4"),
         }
 
     def get_direct_url(self, url: str, format_id: str) -> dict:
@@ -227,8 +349,6 @@ class VideoDownloader:
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "nocheckcertificate": True,
-            "nocheckhostname": True,
         }
         
         user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

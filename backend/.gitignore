@@ -1,0 +1,16 @@
+# ===== 密钥与本地配置（含真实 MiniMax / JWT / Stripe 密钥，严禁提交） =====
+.env
+.env.local
+.env.*.local
+
+# ===== Python 运行时 =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.log
+
+# ===== 运行时数据（SQLite 等，已含敏感缓存/支付记录） =====
+data/

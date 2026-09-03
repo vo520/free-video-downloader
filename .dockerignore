@@ -1,0 +1,26 @@
+# 通用：排除无关文件以缩小构建上下文
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# Node
+**/node_modules
+**/dist
+
+# Python
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# 数据 / 下载（运行时产生，不进镜像）
+**/downloads
+**/data/*.db
+**/data/*.db-journal
+**/data/*.db-wal
+**/data/*.db-shm
+
+# 项目自带脚本（与容器化无关）
+start-dev.sh
+stop-dev.sh

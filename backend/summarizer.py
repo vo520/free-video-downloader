@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from typing import Optional
 
 import httpx
@@ -34,6 +35,92 @@ def _parse_douyin_video_info(url: str) -> dict:
     except Exception as e:
         print(f"解析抖音视频信息失败: {e}")
     return None
+
+
+class ThinkTagFilter:
+    """跨 token 边界过滤 LLM 的 <think>...</think> 思维链标签。
+
+    用于 thinking 模型可能输出的思维链污染(原 MiniMax-M2.7 实测会输出)。
+    状态机处理三类边界:
+    - token 完整包含 <think>...</think> → 完全跳过
+    - token 只含 <think>(开始)/ </think>(结束) → 跨 token 拼接识别
+    - think 模式中所有内容丢弃(保留尾部 close_len-1 字符兜底)
+
+    用法:
+        f = ThinkTagFilter()
+        for token in stream:
+            visible = f.feed(token)
+            if visible:
+                yield visible
+        leftover = f.flush()  # 兜底
+    """
+
+    THINK_OPEN = "<think>"
+    THINK_CLOSE = "</think>"
+
+    def __init__(self):
+        self.in_think = False
+        self.buffer = ""
+
+    def feed(self, token: str) -> str:
+        if not token:
+            return ""
+        text = self.buffer + token
+        self.buffer = ""
+        out = []
+        i = 0
+        n = len(text)
+        close_len = len(self.THINK_CLOSE)
+
+        while i < n:
+            if self.in_think:
+                idx = text.find(self.THINK_CLOSE, i)
+                if idx < 0:
+                    # 保留尾部 close_len-1 字符 buffer 兜底跨 token 边界
+                    keep = close_len - 1
+                    if n - i > keep:
+                        self.buffer = text[n - keep:]
+                    elif n > i:
+                        self.buffer = text[i:]
+                    i = n
+                else:
+                    self.in_think = False
+                    i = idx + close_len
+            else:
+                idx = text.find(self.THINK_OPEN, i)
+                if idx < 0:
+                    tail_len = self._tail_prefix_len(text, self.THINK_OPEN, i)
+                    if tail_len > 0:
+                        out.append(text[i : n - tail_len])
+                        self.buffer = text[n - tail_len :]
+                    else:
+                        out.append(text[i:])
+                    i = n
+                else:
+                    out.append(text[i:idx])
+                    self.in_think = True
+                    i = idx + len(self.THINK_OPEN)
+
+        return "".join(out)
+
+    @staticmethod
+    def _tail_prefix_len(text: str, full: str, start: int) -> int:
+        """text[start:] 末尾最长、可能是 full 前缀的字符数。"""
+        sub = text[start:]
+        max_check = min(len(sub), len(full) - 1)
+        for k in range(max_check, 0, -1):
+            if sub.endswith(full[:k]):
+                return k
+        return 0
+
+    def flush(self) -> str:
+        """流结束兜底:in_think 中残留丢弃。"""
+        leftover = ""
+        if not self.in_think:
+            leftover = self.buffer
+        self.buffer = ""
+        self.in_think = False
+        return leftover
 
 
 class SubtitleExtractor:
@@ -192,6 +279,9 @@ class SubtitleExtractor:
         return m.group(1) if m else None
 
     def _get_video_info(self, url: str) -> dict:
+        # P1 修复尝试（2026-08-25 实测无效）：b站 2026 年风控已升级到 wbi 签名 + cookie 双因子，
+        # 单靠浏览器 UA + Referer 仍返回 412。回滚到原配置以保持最小改动原则，
+        # 真正解决需要叠加用户自传 cookie（P3，超出"不擅自新增功能/依赖"硬约束，待强哥单独议）。
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -328,7 +418,7 @@ class VideoSummarizer:
             api_key=api_key,
             base_url="https://api.minimaxi.com/v1",
         )
-        self.model = "MiniMax-M2.7"
+        self.model = "MiniMax-M3"
         self.max_retries = 3
         self.retry_delay = 2
 
@@ -348,69 +438,90 @@ class VideoSummarizer:
         raise last_error
 
     def summarize_stream(self, subtitle_text: str, language: str = "zh"):
-        """流式生成视频总结，yield 每个 token"""
+        """流式生成视频总结，yield 每个 token(已过滤 <think> 思维链)"""
         prompt = self._build_summary_prompt(subtitle_text, language)
-        
+
         def create_completion():
             return self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个专业的视频内容分析助手，擅长提取关键信息并生成结构化的总结。"},
+                    {"role": "system", "content": self._build_summary_system()},
                     {"role": "user", "content": prompt},
                 ],
                 stream=True,
                 temperature=0.7,
                 max_tokens=4096,
             )
-        
+
         response = self._retry_on_overload(create_completion)
-        
+        think_filter = ThinkTagFilter()
+
         for chunk in response:
             delta = chunk.choices[0].delta
             if delta.content:
-                yield delta.content
+                visible = think_filter.feed(delta.content)
+                if visible:
+                    yield visible
+
+        # 兜底:流结束时清空残留 buffer(若仍在 think 中则丢弃)
+        tail = think_filter.flush()
+        if tail:
+            yield tail
 
     def generate_mindmap(self, subtitle_text: str, language: str = "zh") -> str:
-        """生成思维导图 Markdown（非流式，一次性返回）"""
+        """生成思维导图 Markdown(非流式,一次性返回,已过滤 <think> 思维链)"""
         prompt = self._build_mindmap_prompt(subtitle_text, language)
-        
+
         def create_completion():
             return self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个专业的思维导图生成助手，擅长将内容组织为清晰的层级结构。"},
+                    {"role": "system", "content": self._build_mindmap_system()},
                     {"role": "user", "content": prompt},
                 ],
                 stream=False,
                 temperature=0.5,
                 max_tokens=4096,
             )
-        
+
         response = self._retry_on_overload(create_completion)
-        return response.choices[0].message.content
+        # 非流式:整段文本一次性过滤(也按 feed+flush 走完整状态机)
+        raw = response.choices[0].message.content or ""
+        think_filter = ThinkTagFilter()
+        visible = think_filter.feed(raw)
+        tail = think_filter.flush()
+        return visible + tail
 
     def chat_stream(self, subtitle_text: str, question: str):
-        """基于视频内容的 AI 问答，流式返回"""
+        """基于视频内容的 AI 问答,流式返回(已过滤 <think> 思维链)"""
         prompt = self._build_chat_prompt(subtitle_text, question)
-        
+
         def create_completion():
             return self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个视频内容问答助手。根据提供的视频字幕内容来回答用户的问题。如果问题超出视频内容范围，请诚实告知。"},
+                    {"role": "system", "content": self._build_chat_system()},
                     {"role": "user", "content": prompt},
                 ],
                 stream=True,
                 temperature=0.7,
                 max_tokens=2048,
             )
-        
+
         response = self._retry_on_overload(create_completion)
-        
+        think_filter = ThinkTagFilter()
+
         for chunk in response:
             delta = chunk.choices[0].delta
             if delta.content:
-                yield delta.content
+                visible = think_filter.feed(delta.content)
+                if visible:
+                    yield visible
+
+        # 兜底:流结束时清空残留 buffer(若仍在 think 中则丢弃)
+        tail = think_filter.flush()
+        if tail:
+            yield tail
 
     @staticmethod
     def _build_summary_prompt(subtitle_text: str, language: str) -> str:
@@ -418,18 +529,25 @@ class VideoSummarizer:
         lang_hint = "中文" if language.startswith("zh") else "与原文相同的语言"
         return f"""请对以下视频字幕内容进行深度总结分析，使用{lang_hint}输出。
 
-要求输出格式：
-## 视频概述
-（用2-3句话概括视频的主题和核心内容）
+## 任务要求
+1. 严格基于字幕内容提炼,不臆造未提及的事实、数字、人名
+2. 提炼核心观点与结论,避免堆砌细节
+3. 使用 Markdown 结构化呈现,便于扫读
+4. 各章节字数控制：概述 50-80 字 / 大纲每节 50-100 字 / 要点每条 20-50 字 / 总结 30-50 字
 
-## 内容大纲
-（按视频内容的逻辑顺序，列出主要章节/段落，每个章节包含要点）
+## 输出格式（严格遵循）
 
-## 核心知识要点
-（提取视频中最重要的知识点、观点或结论，用编号列表形式）
+### 视频概述
+（2-3 句话概括视频主题与核心内容）
 
-## 总结
-（用1-2句话给出整体评价或一句话总结）
+### 内容大纲
+（按时间或逻辑顺序,每个章节用 `### 章节名` + 要点列表）
+
+### 核心知识要点
+（提取最重要的观点、结论或方法,用编号列表 1. 2. 3.）
+
+### 总结
+（1-2 句话给出一句话总结或核心观点）
 
 ---
 视频字幕内容：
@@ -441,14 +559,18 @@ class VideoSummarizer:
         lang_hint = "中文" if language.startswith("zh") else "与原文相同的语言"
         return f"""请将以下视频字幕内容整理为思维导图结构，使用{lang_hint}输出。
 
-要求：
-1. 使用 Markdown 标题层级格式（# 一级标题，## 二级标题，### 三级标题）
-2. 最外层是视频主题
-3. 第二层是主要章节/模块
-4. 第三层是各章节的要点
-5. 可以有第四层做更细的展开
-6. 每个节点的文字要简洁精炼
-7. 只输出 Markdown 内容，不要其他说明文字
+## 任务要求
+1. 使用 Markdown 标题层级（# 一级 / ## 二级 / ### 三级 / #### 四级）
+2. **节点文字简洁精炼**：每个节点标题 ≤ 12 字,避免长句
+3. **层级深度合理**：通常 3-4 层,过深（>5 层）会破坏可读性
+4. **MECE 原则**：同级节点相互独立、穷尽覆盖,避免内容重叠
+5. 只输出 Markdown 标题层级结构,不要任何说明性文字、代码块包裹或列表标记
+
+## 结构建议
+- `#` 根节点：视频核心主题
+- `##` 第二层：主要章节/模块（通常 3-6 个）
+- `###` 第三层：各章节核心要点（每章节 2-5 个）
+- `####` 第四层：可选,用于关键概念的细节展开
 
 ---
 视频字幕内容：
@@ -459,13 +581,90 @@ class VideoSummarizer:
         truncated = subtitle_text[:12000]
         return f"""以下是一个视频的字幕内容，请根据这些内容回答用户的问题。
 
+## 任务要求
+1. 优先基于字幕内容作答,可适当引用原文（用引号标注）
+2. 若字幕未涉及该问题,明确说明「视频内容未涉及」并简要说明理由
+3. 回答简洁明了,避免冗长,优先使用列表/小标题组织
+4. 严禁编造未提及的人物、数字、事实或观点
+5. 如问题涉及多角度,可分点对比说明
+
+## 输出格式
+- 答案开头不要寒喧,直接给出结论
+- 关键信息使用加粗 `**关键词**` 突出
+- 引用原文时用 `> 引用文本` 形式
+
+---
 视频字幕内容：
 {truncated}
 
 ---
-用户问题：{question}
+用户问题：{question}"""
 
-请基于视频内容给出准确、详细的回答。如果视频内容中没有相关信息，请诚实说明。"""
+    # ===== System prompt 构建器 =====
+    # 把角色定位 + 行为准则 + 输出约束集中到 system,user prompt 只负责具体任务描述。
+    # 优化方向：从"你是一个 XXX"单句 → 加入身份边界 + 行为准则 + 输出约束三段式。
+
+    @staticmethod
+    def _build_summary_system() -> str:
+        return """你是一名资深视频内容分析师,擅长从长视频字幕中提炼结构化、可执行的总结。
+
+## 身份边界
+- 只基于提供的字幕内容作答,绝不引用视频外的常识或臆测
+- 你是分析者,不是评论者,保持客观中立
+- 字幕不清晰时,以"原文不清晰"标注,不要推测
+
+## 行为准则
+1. 优先提取可执行的方法论、关键数据、核心观点
+2. 区分"事实陈述"与"演讲者观点",用 Markdown 加粗区分
+3. 合并相似观点,删除冗余的过渡性口语
+4. 保留必要的原话引用（用 `>` 块引用）增强说服力
+
+## 输出约束
+- 使用 Markdown 标题与列表,层级不超过 3 级
+- 全文不超过 1500 字（结构化压缩,不堆砌）
+- 严格遵循 user prompt 中指定的输出格式模板"""
+
+    @staticmethod
+    def _build_mindmap_system() -> str:
+        return """你是一名思维导图设计师,擅长将长文本压缩为层级清晰的视觉化结构。
+
+## 身份边界
+- 只输出 Markdown 标题层级结构（# / ## / ### / ####）
+- 不要输出代码块、列表标记、说明性文字
+- 不要编造字幕中未提及的章节
+
+## 行为准则
+1. 节点文字 ≤ 12 字,简洁精炼,便于一眼扫读
+2. 同级节点遵循 MECE 原则（相互独立、穷尽覆盖）
+3. 层级深度 3-4 层最佳,避免过深破坏可读性
+4. 根节点（#）必须是视频主题,而非"思维导图"这种容器词
+6. 叶子节点（最底层）必须是可独立理解的最小知识点
+
+## 输出约束
+- 只输出 Markdown 标题,前后无空行外的任何字符
+- 总节点数控制在 30-50 个,过多则合并
+- Markdown 渲染后将作为可视化思维导图,层级即视觉层级"""
+
+    @staticmethod
+    def _build_chat_system() -> str:
+        return """你是一名视频内容问答助手,根据用户提供的视频字幕精准作答。
+
+## 身份边界
+- 回答范围严格限定在提供的字幕内容
+- 字幕未涉及的问题,明确告知"视频内容未涉及",不编造答案
+- 你是检索者而非创造者,引用而非生成
+
+## 行为准则
+1. 优先引用字幕原文作答,使用 `> 引用` 块引用
+2. 答案开头直接给结论,不寒喧
+3. 关键信息用 `**加粗**` 突出
+4. 如问题涉及对比或多角度,使用列表分点说明
+5. 严禁编造字幕未提及的人物、数字、日期、因果关系
+
+## 输出约束
+- 回答不超过 300 字,简洁有力,优先条理化呈现
+- 引用原文不超过 50 字/次,避免大段堆砌
+- 不输出"好的""当然"等客套话"""
 
 
 def _time_to_seconds(time_str: str) -> float:

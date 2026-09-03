@@ -1,0 +1,145 @@
+import { ref } from 'vue'
+import { parseVideo, saveVideoCache } from '../api/video.js'
+import { isLoggedIn } from '../api/auth.js'
+import { getApiError, extractErrorMsg } from '../utils/error.js'
+
+/**
+ * 历史 snapshot 缺失时的统一兜底提示文案。
+ * HistoryDrawer 在 emit view-history-record 前预检 snapshot（防止抽屉误关），
+ * useVideo.handleShowHistoryRecord 内部兜底检查。两处共用同一句文案。
+ */
+export const MISSING_SNAPSHOT_TIP =
+  '该历史无完整数据，请在主输入框粘贴链接重新解析'
+
+// handleParse 版本号守卫：连续快速点击解析（HeroSection/AppHeader/HistoryDrawer 任一来源触发）时，
+// 慢请求返回后不会覆盖快请求的最新结果（race condition）。
+let parseSeq = 0
+
+/**
+ * 视频功能 composable（替换原 App.vue 内联 videoData/currentUrl/summaryParams/summarizing + 6 个函数）。
+ * - summaryParams: Step 2 合并的双 ref 对象（key + fromHistory），所有赋值走 bumpSummary()。
+ * - handleParse 内部根据 isLoggedIn() 走 refreshHistory() 或 addLocalHistory()，
+ *   这两个函数由 useHistory 提供,作为参数注入（避免直接依赖 useHistory 实例）。
+ * - handleHistoryDeleted 不直接读 useVideo 外的状态,自包含 currentUrl 检查。
+ */
+export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
+  const loading = ref(false)
+  const videoData = ref(null)
+  const currentUrl = ref('')
+  // Step 2 合并的双 ref:key 作 :key 重建触发器,fromHistory 控制 autoTrigger
+  const summaryParams = ref({ key: 0, fromHistory: false })
+  const summarizing = ref(false)
+
+  function bumpSummary(fromHistory) {
+    summaryParams.value = {
+      ...summaryParams.value,
+      key: summaryParams.value.key + 1,
+      fromHistory,
+    }
+  }
+
+  function handleSummarizeLoadingChange(isLoading) {
+    summarizing.value = isLoading
+  }
+
+  function handleSummarize() {
+    bumpSummary(false)
+  }
+
+  async function handleParse(url) {
+    const mySeq = ++parseSeq
+    loading.value = true
+    videoData.value = null
+    currentUrl.value = url
+    // 进入 parse 模式:先重置 fromHistory（无论成功失败都重置,确保 autoTrigger 正确）
+    summaryParams.value = { ...summaryParams.value, fromHistory: false }
+    try {
+      const res = await parseVideo(url)
+      // 版本号守卫：仅在本次调用仍是最新时才更新视频数据，避免慢请求覆盖快请求结果
+      if (mySeq !== parseSeq) return
+      if (res.success) {
+        videoData.value = res.data
+        // parse 成功才 bump 触发 VideoSummary 重建
+        bumpSummary(false)
+        if (isLoggedIn()) {
+          if (refreshHistory) refreshHistory()
+        } else {
+          if (addLocalHistory) addLocalHistory(url, res.data)
+        }
+        // 解析结果 best-effort 归档到视频缓存,供后台管理查看（失败不影响体验）
+        saveVideoCache({
+          url,
+          video_info: {
+            platform: res.data.platform,
+            video_id: res.data.id,
+            title: res.data.title,
+            uploader: res.data.uploader,
+            thumbnail: res.data.thumbnail,
+          },
+          metadata: {
+            duration: res.data.duration,
+            file_size: null,
+          },
+          success: true,
+        }).catch(() => {})
+      } else {
+        if (showToast) showToast('解析失败：' + extractErrorMsg(res.error), 'error')
+      }
+    } catch (err) {
+      if (mySeq !== parseSeq) return
+      if (showToast) showToast(getApiError(err, '解析失败'), 'error')
+    } finally {
+      // loading 仅由最新请求复位（旧的 finally 跳过）
+      if (mySeq === parseSeq) loading.value = false
+    }
+  }
+
+  /**
+   * 从历史抽屉点解析记录进入：直接用数据库落库的 snapshot 还原 videoData 显示,
+   * 不走 /api/parse 重跑 yt-dlp。硬约束：即便无 snapshot 也绝不降级重跑——按用户要求
+   * 「应该从数据库中直接显示内容」。
+   */
+  function handleShowHistoryRecord(item) {
+    const snapshot = item && item.snapshot
+    if (!snapshot || typeof snapshot !== 'object') {
+      if (showToast) showToast(MISSING_SNAPSHOT_TIP, 'info')
+      return
+    }
+    loading.value = false
+    videoData.value = snapshot
+    // 兼容两种历史条目字段：服务端是 video_url，本地（addLocalHistory）是 url。
+    currentUrl.value = item.video_url || item.url || ''
+    // 点历史回看：不自动跑 AI 总结,避免对已总结过的视频重跑浪费配额,
+    // 用户可手动点 VideoResult 顶部的「AI 总结」按钮触发。
+    bumpSummary(true)
+    // 抽屉由 HistoryDrawer 自己关闭；窗口滚到顶部让用户立即看到还原的视频结果。
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+  }
+
+  /**
+   * 抽屉删除/清空历史时的联动清理：若被删条目对应当前正在显示的视频（parse 类型且 url 一致）,
+   * 同步清掉 videoData / currentUrl / 触发 VideoSummary 重建,避免用户看到陈旧内容。
+   */
+  function handleHistoryDeleted(item) {
+    if (!item || item.type !== 'parse') return
+    if (!currentUrl.value || item.video_url !== currentUrl.value) return
+    videoData.value = null
+    currentUrl.value = ''
+    bumpSummary(false)
+    if (showToast) showToast('当前视频对应历史已删除', 'info')
+  }
+
+  return {
+    loading,
+    videoData,
+    currentUrl,
+    summaryParams,
+    summarizing,
+    bumpSummary,
+    handleSummarize,
+    handleSummarizeLoadingChange,
+    handleParse,
+    handleShowHistoryRecord,
+    handleHistoryDeleted,
+  }
+}

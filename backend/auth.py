@@ -1,5 +1,7 @@
 import os
 import re
+import secrets
+import warnings
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -7,7 +9,16 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-JWT_SECRET = os.getenv("JWT_SECRET", "saveany-dev-secret-change-in-production")
+# 不再硬编码弱密钥。未配置 JWT_SECRET 时生成随机临时密钥（仅本次进程有效，重启即失效），
+# 避免被利用默认密钥伪造 Token；生产环境必须通过环境变量设置固定密钥。
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    JWT_SECRET = secrets.token_hex(32)
+    warnings.warn(
+        "JWT_SECRET 未设置，已使用随机临时密钥（进程重启后失效）。"
+        "生产环境请通过环境变量 JWT_SECRET 配置固定密钥，否则已签发的 Token 会在重启后失效。",
+        RuntimeWarning,
+    )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72
 
@@ -35,6 +46,9 @@ def create_token(user_id: int, email: str) -> str:
 def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        # 防御：缺 sub 或 sub 非整数时按无效 Token 处理，避免 int() 抛 KeyError 导致 500
+        if "sub" not in payload:
+            raise jwt.InvalidTokenError("missing sub")
         payload["sub"] = int(payload["sub"])
         return payload
     except jwt.ExpiredSignatureError:

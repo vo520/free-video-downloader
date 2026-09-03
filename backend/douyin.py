@@ -17,7 +17,12 @@ from urllib.parse import urlparse, parse_qs
 
 import requests
 
+from downloader import _enforce_quota
+
 logger = logging.getLogger("douyin")
+
+# WAF 暴力求解时间预算（秒）：超过即放弃，避免长时间占用线程
+WAF_SOLVE_TIMEOUT = 20
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -94,8 +99,12 @@ class DouyinParser:
             safe_title = f"douyin_{video_id}"
 
         ext = ".mp4" if mode == "video" else ".mp3"
-        filename = f"{safe_title}{ext}"
+        # 文件名带 video_id，避免同标题视频相互覆盖
+        filename = f"{safe_title}_{video_id}{ext}"
         filepath = self.download_dir / filename
+
+        # 下载前确保临时目录不超出磁盘配额
+        _enforce_quota(str(self.download_dir))
 
         self._download_file(media_url, filepath)
 
@@ -212,7 +221,7 @@ class DouyinParser:
         raise ValueError("分享页中未找到视频信息")
 
     def _solve_waf_and_retry(self, html: str, page_url: str) -> str:
-        """解决抖音 WAF 反爬验证"""
+        """解决抖音 WAF 反爬验证（带时间预算，超时即放弃以防长时间占线程）"""
         match = re.search(r'wci="([^"]+)"\s*,\s*cs="([^"]+)"', html)
         if not match:
             return html
@@ -226,7 +235,11 @@ class DouyinParser:
         except (KeyError, ValueError):
             return html
 
+        deadline = time.monotonic() + WAF_SOLVE_TIMEOUT
         for candidate in range(1_000_001):
+            if time.monotonic() > deadline:
+                logger.warning("WAF 暴力求解超过 %ss，放弃本次挑战", WAF_SOLVE_TIMEOUT)
+                return html
             digest = hashlib.sha256(prefix + str(candidate).encode()).hexdigest()
             if digest == expected:
                 challenge_data["d"] = base64.b64encode(
@@ -336,6 +349,24 @@ class DouyinParser:
                 "has_audio": True,
                 "label": f"无水印 MP4 ({height}p)" if height else "无水印 MP4 (原始画质)",
                 "_direct_url": clean_url,
+            })
+
+        # 仅音频选项：暴露给前端"仅音频"预设（实际下载走 DouyinParser.download(mode="audio")）
+        music = item_info.get("music", {})
+        music_urls = music.get("play_url", {}).get("url_list", []) if isinstance(music, dict) else []
+        if music_urls:
+            formats.append({
+                "format_id": "douyin_audio",
+                "ext": "mp3",
+                "resolution": "音频",
+                "height": 0,
+                "filesize": None,
+                "filesize_approx": None,
+                "vcodec": "none",
+                "acodec": "aac",
+                "has_audio": True,
+                "label": "仅音频 MP3",
+                "_direct_url": music_urls[0],
             })
 
         return {

@@ -9,7 +9,7 @@
   --color-bg-section: #F8FAFC;
   --color-text-primary: #1F1F1F;
   --color-text-secondary: #6B7280;
-  --color-text-muted: #9CA3AF;
+  --color-text-muted: #6B7280;
   --color-border: #E5E7EB;
   --color-border-light: #F3F4F6;
   --color-success: #10B981;
@@ -29,7 +29,7 @@ body {
 }
 
 #app {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
