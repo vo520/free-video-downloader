@@ -5,10 +5,19 @@ services:
     working_dir: /app
     volumes:
       - ./backend:/app
+      # 持久化 SQLite 与下载目录，避免容器重建后数据丢失
+      - fvd-backend-data:/app/data
+      - fvd-backend-downloads:/app/downloads
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      # JWT_SECRET 必须显式配置，否则 auth.py 仅使用进程级随机密钥，
+      # 重启后已签发的 Token 全部失效。默认值仅用于本地开发。
+      - JWT_SECRET=${JWT_SECRET:-dev-only-jwt-secret-change-me}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -22,8 +31,14 @@ services:
     ports:
       - "5173:5173"
     environment:
+      # 桥接网络下用容器名 backend 解析后端；vite proxy 转发 /api 到后端。
       - VITE_BACKEND_HOST=backend
     depends_on:
       - backend
     stdin_open: true
     tty: true
+    restart: unless-stopped
+
+volumes:
+  fvd-backend-data:
+  fvd-backend-downloads:
