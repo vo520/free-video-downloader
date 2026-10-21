@@ -1,8 +1,8 @@
 <template>
-  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-border-light">
+  <header class="sticky top-0 z-50 border-b border-white/70 bg-white/70 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <a href="/" class="flex items-center gap-3" title="SaveAny - 免费在线万能视频下载器">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-sm" role="img" aria-label="SaveAny Logo">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-lg shadow-primary/20 ring-1 ring-white/40" role="img" aria-label="SaveAny Logo">
           <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -10,15 +10,15 @@
               d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <span class="text-lg font-semibold text-text-primary tracking-tight">SaveAny</span>
-        <span class="hidden sm:inline text-xs text-text-muted bg-primary-light px-2 py-0.5 rounded-full">万能视频下载</span>
+        <span class="text-lg font-black text-text-primary tracking-[-0.03em]">SaveAny</span>
+        <span class="hidden sm:inline text-xs text-primary bg-primary-light/80 px-2.5 py-1 rounded-full font-medium">万能视频下载</span>
       </a>
       <nav class="hidden md:flex items-center gap-2 text-sm text-text-secondary" aria-label="主导航">
         <!-- 最近解析：点击展开历史下拉，避免导航链接点击无效 -->
         <div class="relative" ref="historyRef">
           <button
             @click="historyOpen = !historyOpen"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-gray-50 transition-colors cursor-pointer"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-white hover:shadow-sm transition-all cursor-pointer"
             :class="{ 'text-primary bg-primary-light': historyOpen }"
             title="查看最近解析记录"
             aria-haspopup="menu"
@@ -40,7 +40,7 @@
             v-if="historyOpen"
             id="history-dropdown"
             role="menu"
-            class="absolute left-0 top-full mt-2 w-80 bg-white rounded-xl border border-border shadow-xl py-2 animate-menu-in"
+            class="absolute left-0 top-full mt-2 w-80 bg-white/95 rounded-2xl border border-white/80 shadow-2xl shadow-slate-900/10 py-2 backdrop-blur animate-menu-in"
           >
             <div class="px-4 py-2 flex items-center justify-between border-b border-border">
               <p class="text-xs font-semibold text-text-muted uppercase tracking-wider">最近解析</p>
@@ -111,7 +111,7 @@
 
         <!-- 已登录 -->
         <template v-else>
-          <BaseButton v-if="!user.is_vip" @click="$emit('open-vip')" variant="ghost" class="!hidden !sm:inline-flex !items-center !gap-1.5 !px-4 !py-2 !rounded-full !text-sm !font-medium !text-primary !bg-primary-light !hover:bg-primary/15">
+          <BaseButton v-if="!user.is_vip" @click="$emit('open-vip')" :loading="vipLoading" variant="ghost" class="!hidden !sm:inline-flex !items-center !gap-1.5 !px-4 !py-2 !rounded-full !text-sm !font-medium !text-primary !bg-primary-light !hover:bg-primary/15">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
@@ -146,7 +146,7 @@
             v-if="menuOpen"
             id="user-menu"
             role="menu"
-            class="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl border border-border shadow-xl py-2 animate-menu-in"
+            class="absolute right-0 top-full mt-2 w-56 bg-white/95 rounded-2xl border border-white/80 shadow-2xl shadow-slate-900/10 py-2 backdrop-blur animate-menu-in"
           >
               <div class="px-4 py-2 border-b border-border">
                 <p class="text-sm font-medium text-text-primary truncate">{{ user.email }}</p>
@@ -155,7 +155,7 @@
                   <span v-if="user.is_vip && user.vip_expire_at" class="ml-1">· 到期 {{ formatDate(user.vip_expire_at) }}</span>
                 </p>
               </div>
-              <BaseButton v-if="!user.is_vip" @click="menuOpen = false; $emit('open-vip')" variant="ghost" class="!w-full !text-left !px-4 !py-2.5 !text-sm !text-primary !hover:bg-primary-light !flex !items-center !gap-2">
+              <BaseButton v-if="!user.is_vip" @click="menuOpen = false; $emit('open-vip')" :loading="vipLoading" variant="ghost" class="!w-full !text-left !px-4 !py-2.5 !text-sm !text-primary !hover:bg-primary-light !flex !items-center !gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
                 </svg>
@@ -185,6 +185,7 @@ import { formatDate } from '../utils/format.js'
 const props = defineProps({
   user: { type: Object, default: null },
   history: { type: Array, default: () => [] },
+  vipLoading: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['login', 'register', 'logout', 'open-vip', 'reparse', 'remove-history', 'clear-history'])

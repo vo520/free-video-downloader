@@ -103,11 +103,19 @@ async def get_videos(
             limit=limit,
             offset=offset
         )
+        # 修复：total 必须是与筛选条件匹配的真实总条数（COUNT），
+        # 而非当前页返回条数 len(videos)，否则前端分页「下一页」会被错误禁用。
+        total = video_cache_db.count_videos(
+            cache_status=cache_status,
+            platform=platform,
+            search=search,
+            hot_only=hot_only,
+        )
         
         return JSONResponse(content={
             "success": True,
             "data": videos,
-            "total": len(videos),
+            "total": total,
             "limit": limit,
             "offset": offset
         })

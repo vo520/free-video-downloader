@@ -66,12 +66,12 @@ const shapeClass = computed(() => ({
 }[props.shape] || 'rounded-full'))
 
 const variantClass = computed(() => ({
-  primary:   'bg-primary hover:bg-primary-dark text-white shadow-sm',
-  secondary: 'border-2 border-primary text-primary hover:bg-primary hover:text-white shadow-sm',
-  ghost:     'text-primary hover:bg-primary-light',
+  primary:   'bg-gradient-to-r from-primary to-primary-dark hover:from-primary-dark hover:to-primary text-white shadow-sm shadow-primary/20',
+  secondary: 'border border-primary/25 bg-primary-light/70 text-primary hover:bg-primary hover:text-white shadow-sm',
+  ghost:     'text-primary hover:bg-primary-light/80',
   danger:    'bg-red-600 hover:bg-red-700 text-white shadow-sm',
-  outline:   'bg-white text-text-primary border border-border hover:border-primary hover:text-primary',
-}[props.variant] || 'bg-primary hover:bg-primary-dark text-white'))
+  outline:   'bg-white/80 text-text-primary border border-border hover:border-primary hover:text-primary hover:bg-white shadow-sm',
+}[props.variant] || 'bg-gradient-to-r from-primary to-primary-dark text-white'))
 
 const blockClass = computed(() => (props.block ? 'w-full' : ''))
 </script>

@@ -2,30 +2,47 @@
 @plugin "@tailwindcss/typography";
 
 @theme {
-  --color-primary: #1777FF;
-  --color-primary-dark: #1260DD;
-  --color-primary-light: #E8F1FF;
-  --color-bg-main: #FFFFFF;
-  --color-bg-section: #F8FAFC;
-  --color-text-primary: #1F1F1F;
-  --color-text-secondary: #6B7280;
-  --color-text-muted: #6B7280;
-  --color-border: #E5E7EB;
-  --color-border-light: #F3F4F6;
-  --color-success: #10B981;
+  --color-primary: #1463FF;
+  --color-primary-dark: #0B3FB8;
+  --color-primary-light: #EAF1FF;
+  --color-bg-main: #F6F8FC;
+  --color-bg-section: #FFFFFF;
+  --color-text-primary: #111827;
+  --color-text-secondary: #526070;
+  --color-text-muted: #7C8797;
+  --color-border: #DDE5F0;
+  --color-border-light: #EEF3F9;
+  --color-success: #13B981;
   --color-warning: #F59E0B;
   --color-error: #EF4444;
 }
 
+:root {
+  color-scheme: light;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial,
-    sans-serif;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+    'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: var(--color-text-primary);
-  background-color: var(--color-bg-main);
+  background:
+    radial-gradient(circle at 12% -10%, rgba(20, 99, 255, 0.14), transparent 30rem),
+    radial-gradient(circle at 88% 8%, rgba(19, 185, 129, 0.10), transparent 26rem),
+    linear-gradient(180deg, #F8FBFF 0%, #F3F6FB 48%, #FFFFFF 100%);
+}
+
+::selection {
+  color: #fff;
+  background: var(--color-primary);
 }
 
 #app {

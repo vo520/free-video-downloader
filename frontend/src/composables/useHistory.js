@@ -59,8 +59,9 @@ function _toHistoryItem(row) {
   }
 }
 
-export function useHistory({ showToast } = {}) {
+export function useHistory({ showToast, isAuthed } = {}) {
   const history = ref([])
+  const hasAuthedUser = () => (isAuthed ? isAuthed() : isLoggedIn())
 
   async function _loadParseHistory(onError = 'reset') {
     try {
@@ -94,7 +95,7 @@ export function useHistory({ showToast } = {}) {
   }
 
   async function loadHistory() {
-    if (isLoggedIn()) {
+    if (hasAuthedUser()) {
       await _loadParseHistory('reset')
       return
     }
@@ -107,12 +108,12 @@ export function useHistory({ showToast } = {}) {
   }
 
   async function refreshHistory() {
-    if (!isLoggedIn()) return
+    if (!hasAuthedUser()) return
     await _loadParseHistory('keep')
   }
 
   async function removeHistory(urlOrId) {
-    if (isLoggedIn()) {
+    if (hasAuthedUser()) {
       const item = history.value.find(h => (h.id != null ? String(h.id) === String(urlOrId) : h.url === urlOrId))
       if (!item || item.id == null) {
         history.value = history.value.filter(h => h.url !== urlOrId)
@@ -138,7 +139,7 @@ export function useHistory({ showToast } = {}) {
   }
 
   async function clearHistory() {
-    if (isLoggedIn()) {
+    if (hasAuthedUser()) {
       try {
         await clearMyHistory()
       } catch (err) {

@@ -1,7 +1,7 @@
 <template>
-  <div class="bg-white rounded-2xl border border-border shadow-lg overflow-hidden h-full flex flex-col">
+  <div class="bg-white/85 rounded-[1.5rem] border border-white/80 shadow-2xl shadow-slate-900/10 overflow-hidden h-full flex flex-col backdrop-blur">
     <!-- 标签页导航 -->
-    <div class="flex border-b border-border-light">
+    <div class="flex border-b border-border-light/80 bg-slate-50/50">
       <button
         v-for="tab in tabs"
         :key="tab.key"
@@ -105,7 +105,8 @@ import ChatPanel from './panels/ChatPanel.vue'
   async function startSummarize() {
     // 先中断上一次可能未完成的总结请求，避免旧 chunk 持续触发回调污染新状态
     if (currentController) currentController.abort()
-    currentController = new AbortController()
+    const controller = new AbortController()
+    currentController = controller
 
     loading.value = true
     summaryText.value = ''
@@ -156,14 +157,14 @@ import ChatPanel from './panels/ChatPanel.vue'
             showToast('总结失败: ' + data, 'error')
           }
         },
-      }, props.videoTitle, '', currentController.signal)
+      }, props.videoTitle, '', controller.signal)
     } catch (err) {
       // 用户主动中断不视为错误（避免离开页面时弹错误 toast）
       if (err.name === 'AbortError') return
       loading.value = false
       showToast('总结请求失败: ' + err.message, 'error')
     } finally {
-      currentController = null
+      if (currentController === controller) currentController = null
     }
   }
 

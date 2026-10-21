@@ -1,28 +1,30 @@
 <template>
-  <section class="relative overflow-hidden bg-gradient-to-b from-primary-light/50 to-white transition-all"
+  <section class="relative overflow-hidden transition-all"
     :class="compact ? 'pt-6 pb-4 sm:pt-8 sm:pb-6' : 'pt-16 pb-12 sm:pt-24 sm:pb-16'"
   >
     <!-- 装饰背景 -->
     <div class="absolute inset-0 overflow-hidden pointer-events-none">
-      <div class="absolute -top-40 -right-40 w-96 h-96 bg-primary/5 rounded-full blur-3xl"></div>
-      <div class="absolute -bottom-20 -left-20 w-72 h-72 bg-primary/5 rounded-full blur-3xl"></div>
+      <div class="absolute left-1/2 top-8 h-64 w-[42rem] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl"></div>
+      <div class="absolute -right-28 top-10 h-72 w-72 rounded-full bg-success/10 blur-3xl"></div>
+      <div class="absolute left-8 top-1/3 hidden h-28 w-28 rounded-[2rem] border border-primary/10 bg-white/30 rotate-12 sm:block"></div>
+      <div class="absolute right-16 bottom-12 hidden h-20 w-20 rounded-full border border-success/20 bg-white/40 sm:block"></div>
     </div>
 
     <div class="relative max-w-4xl mx-auto px-4 sm:px-6 text-center">
       <template v-if="showSlogan">
-        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white shadow-sm border border-border-light text-sm text-text-secondary"
+        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/75 shadow-sm shadow-primary/5 border border-white/80 backdrop-blur text-sm text-text-secondary"
           :class="compact ? 'mb-3' : 'mb-6'"
         >
-          <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+          <span class="w-2 h-2 rounded-full bg-success animate-pulse shadow-[0_0_0_5px_rgba(19,185,129,0.12)]"></span>
           支持 1800+ 平台，永久免费使用
         </div>
 
-        <h1 :class="compact ? 'text-2xl sm:text-3xl mb-2' : 'text-3xl sm:text-5xl mb-4'" class="font-bold text-text-primary leading-tight">
+        <h1 :class="compact ? 'text-2xl sm:text-3xl mb-2' : 'text-4xl sm:text-6xl mb-5'" class="font-black tracking-[-0.045em] text-text-primary leading-[1.02]">
           免费在线视频下载器
-          <span class="text-primary">，一键保存</span>
+          <span class="block bg-gradient-to-r from-primary via-primary-dark to-success bg-clip-text text-transparent sm:inline">一键保存</span>
         </h1>
         <p :class="compact ? 'mb-4 text-sm sm:text-base' : 'mb-10 text-base sm:text-lg'" class="text-text-secondary max-w-2xl mx-auto leading-relaxed">
-          粘贴视频链接，智能解析下载。支持 YouTube、Bilibili、抖音、TikTok 等 1800+ 平台，多种清晰度可选，还能 AI 总结视频内容
+          粘贴链接即可解析下载，支持 YouTube、Bilibili、抖音、TikTok 等 1800+ 平台，并可生成 AI 摘要、字幕与思维导图。
         </p>
       </template>
 
@@ -34,8 +36,8 @@
           @dragover.prevent="dragActive = true"
           @dragleave.prevent="onDragLeave"
           @drop.prevent="onDrop"
-          class="relative flex items-center rounded-full transition-all"
-          :class="dragActive ? 'ring-2 ring-primary/30' : ''"
+          class="relative flex items-center rounded-[1.75rem] bg-white/75 p-1.5 shadow-2xl shadow-primary/10 ring-1 ring-white/80 backdrop-blur-xl transition-all"
+          :class="dragActive ? 'ring-2 ring-primary/30 scale-[1.01]' : ''"
           role="search"
           aria-label="视频链接解析"
         >
@@ -51,7 +53,7 @@
               v-model="url"
               type="url"
               :placeholder="placeholder"
-              class="w-full h-13 sm:h-14 pl-12 pr-4 rounded-full sm:rounded-r-none border border-border bg-white text-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all shadow-sm"
+              class="w-full h-13 sm:h-14 pl-12 pr-14 sm:pr-4 rounded-full sm:rounded-r-none border border-transparent bg-white/80 text-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/25 focus:bg-white transition-all"
               :disabled="loading"
               autocomplete="url"
               @paste="onPaste"
@@ -63,7 +65,7 @@
             :disabled="loading || !url.trim()"
             variant="primary"
             size="xl"
-            class="hidden sm:inline-flex !items-center !gap-2 !h-14 !px-8 !rounded-r-full !rounded-l-none !text-white !font-medium !text-base !shadow-md hover:shadow-lg"
+            class="hidden sm:inline-flex !items-center !gap-2 !h-14 !px-8 !rounded-r-[1.35rem] !rounded-l-none !text-white !font-semibold !text-base !shadow-lg !shadow-primary/25 hover:!shadow-xl hover:!shadow-primary/30"
           >
             <Spinner v-if="loading" size="sm" />
             <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,7 +118,7 @@
             v-if="dragActive"
             class="mt-4 mx-auto max-w-2xl px-4 py-3 rounded-2xl border-2 border-dashed border-primary bg-primary-light text-sm text-primary font-medium"
           >
-            松开即可批量填入链接
+            松开后自动识别单条或批量链接
           </div>
         </transition>
 
@@ -175,9 +177,13 @@ function normalizeUrl(raw) {
 
 function onSubmit() {
   const trimmed = url.value.trim()
-  if (trimmed) {
-    emit('parse', normalizeUrl(trimmed))
+  if (!trimmed) return
+  const urls = splitUrls(trimmed)
+  if (urls.length > 1) {
+    emit('open-batch', trimmed)
+    return
   }
+  emit('parse', normalizeUrl(urls[0] || trimmed))
 }
 
 // 拖拽离开：仅在真正移出容器（relatedTarget 不在容器内）时才取消高亮，
@@ -192,10 +198,15 @@ function onDragLeave(e) {
 function onDrop(e) {
   dragActive.value = false
   const text = e.dataTransfer?.getData('text') || e.dataTransfer?.getData('text/plain') || ''
-  if (text) {
-    const cur = url.value.trim()
-    url.value = (cur ? cur + '\n' : '') + text.trim()
+  if (!text) return
+  const cur = url.value.trim()
+  const next = (cur ? cur + '\n' : '') + text.trim()
+  const urls = splitUrls(next)
+  if (urls.length > 1) {
+    emit('open-batch', next)
+    return
   }
+  url.value = urls[0] || next
 }
 
 // 粘贴时若检测到多个链接，给出快捷批量入口（不自动跳转，避免打断单条输入）

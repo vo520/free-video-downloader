@@ -219,7 +219,7 @@ import EmptyState from './ui/EmptyState.vue'
 import VideoThumbnail from './VideoThumbnail.vue'
 import BaseButton from './ui/BaseButton.vue'
 
-const emit = defineEmits(['reparse', 'view-history-record', 'history-deleted'])
+const emit = defineEmits(['reparse', 'view-history-record', 'history-deleted', 'history-cleared'])
 const downloadManager = useDownloadManager()
 // 复用 App.vue 已 provide 的全局轻提示（与首页删除/清空已有 toast 风格统一）。
 // 父组件未 provide 时回退到 console.warn 而非抛错，避免单测/沙箱场景崩溃。
@@ -431,6 +431,7 @@ async function clearAll() {
     search.value = ''
     // 给出明确数量反馈，避免用户怀疑"是否真的清完了"
     showToast(n > 0 ? `已清空 ${n} 条记录` : '已清空', 'success')
+    emit('history-cleared')
     for (const it of deletedItems) emit('history-deleted', it)
   } catch (e) {
     showActionError(getApiError(e, '清空失败'))

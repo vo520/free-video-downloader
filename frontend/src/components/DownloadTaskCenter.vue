@@ -3,7 +3,7 @@
   <BaseButton
     @click="togglePanel"
     variant="primary"
-    class="!fixed !bottom-6 !right-6 !z-[150] !flex !items-center !gap-2 !h-12 !pl-4 !pr-5 !rounded-full !shadow-xl"
+    class="!fixed !bottom-6 !right-6 !z-[150] !flex !items-center !gap-2 !h-12 !pl-4 !pr-5 !rounded-full !shadow-xl !shadow-primary/25"
     title="下载任务中心"
   >
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -25,7 +25,7 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby="download-task-title"
-        class="fixed bottom-0 right-0 z-[160] w-full sm:w-[400px] max-h-[80vh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-border flex flex-col"
+        class="fixed bottom-0 right-0 z-[160] w-full sm:w-[400px] max-h-[80vh] bg-white/95 rounded-t-2xl sm:rounded-2xl shadow-2xl shadow-slate-900/15 border border-white/80 backdrop-blur flex flex-col"
         @keydown.esc.window="closePanel"
       >
         <!-- 头部 -->

@@ -1,8 +1,8 @@
 <template>
-  <div class="bg-white rounded-2xl border border-border shadow-lg overflow-hidden h-full">
+  <div class="bg-white/85 rounded-[1.5rem] border border-white/80 shadow-2xl shadow-slate-900/10 overflow-hidden h-full backdrop-blur">
     <!-- 视频信息头部 -->
     <div class="flex flex-col gap-5 p-5 sm:p-6">
-      <div class="relative w-full aspect-video rounded-xl overflow-hidden bg-gray-100">
+      <div class="relative w-full aspect-video rounded-[1.25rem] overflow-hidden bg-slate-100 shadow-inner ring-1 ring-black/5">
         <!-- 内联预览播放器 -->
         <video
           v-if="showPreview && previewUrl"
@@ -62,10 +62,10 @@
             v-if="previewUrl || videoUrl"
             @click="openPreview"
             :disabled="previewLoading"
-            class="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/30 transition-colors group disabled:cursor-wait"
+            class="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/35 transition-colors group disabled:cursor-wait"
             title="预览播放"
           >
-            <span class="w-14 h-14 rounded-full bg-white/90 flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
+            <span class="w-16 h-16 rounded-full bg-white/95 flex items-center justify-center shadow-2xl shadow-black/20 ring-1 ring-white/70 group-hover:scale-105 transition-transform">
               <Spinner v-if="previewLoading" size="md" class="text-primary" />
               <svg v-else class="w-6 h-6 text-primary ml-1" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M8 5v14l11-7z" />
@@ -125,7 +125,7 @@
     </div>
 
     <!-- 格式选择 -->
-    <div class="border-t border-border-light px-5 sm:px-6 py-5">
+    <div class="border-t border-border-light/80 bg-slate-50/45 px-5 sm:px-6 py-5">
       <h4 class="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
         <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -184,7 +184,7 @@
       <!-- 下载按钮 -->
       <div class="mt-6 flex flex-col items-stretch gap-3">
         <BaseButton
-          @click="$emit('download', selectedFormat)"
+          @click="emit('download', selectedFormat)"
           :disabled="!selectedFormat"
           :loading="downloading"
           variant="primary"
@@ -201,7 +201,7 @@
         </BaseButton>
         <!-- AI 总结按钮（重新总结） -->
         <BaseButton
-          @click="$emit('summarize')"
+          @click="emit('summarize')"
           :loading="summarizing"
           variant="secondary"
           size="lg"
@@ -252,7 +252,7 @@ const props = defineProps({
   summarizing: Boolean,
   videoUrl: { type: String, default: '' },
 })
-defineEmits(['download', 'summarize'])
+const emit = defineEmits(['download', 'summarize', 'format-change'])
 
 // 复用全局轻提示（与 App.vue 同源，避免重复造 toast）
 const showToast = inject('showToast', () => {})
@@ -359,6 +359,7 @@ const recommendedId = computed(() => {
 // 初始选中的格式：默认取推荐画质，与模板下方"推荐"标签语义一致，
 // 避免出现 formats 顺序乱时（YouTube 等）首屏"已选择"指向最低画质但视觉上又"推荐"另一档的 UX 矛盾。
 const selectedFormat = ref(recommendedId.value || props.video.formats?.[0]?.format_id || '')
+watch(selectedFormat, (value) => emit('format-change', value), { immediate: true })
 
 // 快捷预设
 const presets = [

@@ -1,5 +1,5 @@
 <template>
-  <section class="py-6 bg-white">
+  <section class="py-6 bg-transparent">
     <div class="max-w-3xl mx-auto px-4 sm:px-6">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-base font-semibold text-text-primary flex items-center gap-2">
@@ -41,7 +41,7 @@
           <BaseButton
             v-if="doneItems.length"
             @click="downloadAll"
-            :disabled="downloadingAll"
+            :disabled="downloadingAll || !downloadableItems.length"
             variant="secondary"
           >
             <template #icon>
@@ -50,7 +50,7 @@
                   d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             </template>
-            {{ downloadingAll ? '加入队列...' : '全部下载' }}（{{ doneItems.length }}）
+            {{ downloadingAll ? '加入队列...' : '全部下载' }}（{{ downloadableItems.length }}）
           </BaseButton>
           <span class="text-xs text-text-muted">解析完成后再逐条或一键下载</span>
         </div>
@@ -103,7 +103,8 @@
 
           <BaseButton
             v-if="item.status === 'done'"
-            @click="$emit('download', { url: item.url, formatId: item.selectedFormat, title: item.data.title })"
+            @click="downloadOne(item)"
+            :disabled="!canDownload(item)"
             variant="primary"
             size="sm"
             class="!shrink-0 !inline-flex !items-center !gap-1.5 !h-8 !px-3 !rounded-lg !text-xs !font-medium"
@@ -154,7 +155,12 @@ const downloadingAll = ref(false)
 const dragActive = ref(false)
 
 const validUrls = computed(() => splitUrls(urlsText.value))
+const downloadableItems = computed(() => items.value.filter((i) => canDownload(i)))
 const doneItems = computed(() => items.value.filter((i) => i.status === 'done'))
+
+function canDownload(item) {
+  return item.status === 'done' && !!item.selectedFormat
+}
 
 function statusNo(item) {
   const idx = items.value.indexOf(item)
@@ -228,15 +234,24 @@ async function parseAll() {
   }
 }
 
+function downloadOne(item) {
+  if (!canDownload(item)) {
+    showToast('该视频暂无可下载格式', 'info')
+    return
+  }
+  emit('download', { url: item.url, formatId: item.selectedFormat, title: item.data.title })
+}
+
 function downloadAll() {
-  const list = doneItems.value
-  if (!list.length) return
+  const list = downloadableItems.value
+  if (!list.length) {
+    showToast('暂无可下载格式', 'info')
+    return
+  }
   // 逐条交给任务中心（任务中心自行控制并发）。入队为同步操作，瞬时完成，
   // 仅短暂置 loading 给出视觉反馈，避免按钮文案在点击瞬间无变化。
   downloadingAll.value = true
-  list.forEach((item) => {
-    emit('download', { url: item.url, formatId: item.selectedFormat, title: item.data.title })
-  })
+  list.forEach(downloadOne)
   showToast('已加入下载队列', 'success')
   clearTimeout(downloadingAllTimer)
   downloadingAllTimer = setTimeout(() => { downloadingAll.value = false }, 300)

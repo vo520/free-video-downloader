@@ -1,8 +1,9 @@
 <template>
-  <div class="min-h-[100dvh] flex flex-col bg-bg-main">
+  <div class="min-h-[100dvh] flex flex-col bg-transparent">
     <AppHeader
       :user="currentUser"
       :history="history"
+      :vip-loading="openingVip"
       @login="showAuthModal('login')"
       @register="showAuthModal('register')"
       @logout="handleLogout"
@@ -20,7 +21,7 @@
         :showSlogan="!videoData"
       />
       <!-- 解析中骨架屏 -->
-      <section v-if="loading && !videoData" class="py-4 sm:py-6 bg-white">
+      <section v-if="loading && !videoData" class="py-4 sm:py-6 bg-transparent">
         <div class="max-w-7xl mx-auto px-4 sm:px-6">
           <div class="flex flex-col lg:flex-row gap-6">
             <div class="w-full lg:w-2/5 lg:flex-shrink-0">
@@ -47,7 +48,7 @@
         </div>
       </section>
       <!-- 最近解析历史 / 批量解析（本地存储，无需登录） -->
-      <section v-if="!videoData && !loading" class="py-6 bg-white">
+      <section v-if="!videoData && !loading" class="py-6 bg-transparent">
         <BatchPanel
           v-if="batchMode"
           :seed="batchSeed"
@@ -116,7 +117,7 @@
         </div>
       </section>
       <!-- 视频信息 + AI 总结：左右双栏同屏布局 -->
-      <section v-if="videoData" class="py-4 sm:py-6 bg-white">
+      <section v-if="videoData" class="py-4 sm:py-6 bg-transparent">
         <div class="max-w-7xl mx-auto px-4 sm:px-6">
           <div class="flex flex-col lg:flex-row gap-6">
             <!-- 左栏：视频信息 -->
@@ -131,6 +132,7 @@
                 :summarizing="summarizing"
                 @download="onDownload"
                 @summarize="handleSummarize"
+                @format-change="selectedFormatId = $event"
               />
             </div>
             <!-- 右栏：AI 总结 -->
@@ -151,7 +153,7 @@
       </section>
 
       <!-- 视频缓存管理入口 -->
-      <section class="py-8 bg-gradient-to-b from-gray-50 to-white">
+      <section class="py-8 bg-gradient-to-b from-transparent to-white/80">
         <div class="max-w-7xl mx-auto px-4 sm:px-6">
           <VideoCacheAdmin />
         </div>
@@ -220,12 +222,13 @@
       @reparse="handleParse"
       @view-history-record="handleShowHistoryRecord"
       @history-deleted="handleHistoryDeleted"
+      @history-cleared="handleHistoryCleared"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
@@ -246,7 +249,7 @@ import VideoThumbnail from './components/VideoThumbnail.vue'
 import BaseButton from './components/ui/BaseButton.vue'
 import EmptyState from './components/ui/EmptyState.vue'
 import { createCheckoutSession } from './api/payment.js'
-import { isLoggedIn, fetchMe } from './api/auth.js'
+import { fetchMe } from './api/auth.js'
 import { useDownloadManager } from './composables/useDownloadManager.js'
 import { useToast } from './composables/useToast.js'
 import { useAuth } from './composables/useAuth.js'
@@ -263,20 +266,22 @@ const { appToast, showToast } = useToast()
 // 把 showToast 挂到 window，让 utils/request.js 的 axios 拦截器和 SSE 错误归一化工具
 // 能不依赖 Vue runtime 直接调用（util 文件不在 setup context 中）。
 window.__appToast = showToast
+let clearLocalHistory = () => {}
+const { currentUser, restoreUser, handleAuthSuccess, handleLogout } = useAuth({
+  // 退出登录：自动清掉本地历史，避免下次未登录看到前任账号残留。
+  onLogout: () => clearLocalHistory(),
+})
 const {
   history, loadHistory, refreshHistory, removeHistory, clearHistory,
   addLocalHistory, clearLocal,
-} = useHistory({ showToast })
-const { currentUser, restoreUser, handleAuthSuccess, handleLogout } = useAuth({
-  // 退出登录：自动清掉本地历史，避免下次未登录看到前任账号残留。
-  onLogout: () => clearLocal(),
-})
+} = useHistory({ showToast, isAuthed: () => !!currentUser.value })
+clearLocalHistory = clearLocal
 const { authModalVisible, authModalMode, showAuthModal } = useAuthModal()
 const {
   loading, videoData, currentUrl, summaryParams, summarizing,
   handleSummarize, handleSummarizeLoadingChange,
-  handleParse, handleShowHistoryRecord, handleHistoryDeleted,
-} = useVideo({ showToast, refreshHistory, addLocalHistory })
+  handleParse, handleShowHistoryRecord, handleHistoryDeleted, handleHistoryCleared,
+} = useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed: () => !!currentUser.value })
 
 // ===== 鉴权协调：登录成功清本地历史 + 拉服务端历史 =====
 // useAuth.handleAuthSuccess 只更新 currentUser，宿主协调历史刷新（与 useHistory 隔离）。
@@ -288,9 +293,13 @@ function onAuthSuccess(user) {
 
 // ===== 下载任务中心（单例，统一管理并发/进度/取消）=====
 const downloadManager = useDownloadManager()
+const selectedFormatId = ref('')
+watch(currentUrl, () => {
+  selectedFormatId.value = ''
+})
 
-// 主流程按钮联动：根据当前视频 URL 关联的最新任务反映下载状态与进度
-const currentTask = computed(() => downloadManager.latestTaskForUrl(currentUrl.value))
+// 主流程按钮联动：根据当前视频 URL + 当前选中格式关联最新任务，避免同一视频不同格式下载状态串联
+const currentTask = computed(() => downloadManager.latestTaskForUrl(currentUrl.value, selectedFormatId.value))
 const downloading = computed(
   () =>
     !!currentTask.value &&
@@ -325,41 +334,68 @@ function onBatchDownload({ url, formatId, title }) {
 }
 
 // ===== VIP 购买（耦合 window.location，留在 App.vue）=====
+const openingVip = ref(false)
 async function handleOpenVip() {
-  if (!isLoggedIn()) {
+  if (openingVip.value) return
+  if (!currentUser.value) {
     showAuthModal('login')
     return
   }
+  openingVip.value = true
   try {
-    const { checkout_url } = await createCheckoutSession('monthly')
-    window.location.href = checkout_url
+    // createCheckoutSession 返回 `{ success, data: { checkout_url, ... } }` 信封，跳转前必须校验内层地址。
+    const res = await createCheckoutSession('monthly')
+    const checkoutUrl = res?.data?.checkout_url
+    if (!res?.success || !checkoutUrl) throw new Error('未获取到支付链接')
+    window.location.href = checkoutUrl
   } catch (err) {
     showToast(getApiError(err, '', '创建支付失败'), 'error')
+    openingVip.value = false
   }
 }
 
 // ===== 支付结果处理（耦合 window.location，留在 App.vue）=====
 const paymentToast = ref(null)
-// 支付 toast 自动消失 + Stripe 回调后延迟刷新当前用户；保留 timerId 便于
-// 多个回调同时抵达清理上一个 timer，避免 5s 后多个 timer 叠加关闭 toast。
+// 支付 toast 自动消失；保留 timerId 便于多个回调同时抵达时清理上一个 timer，
+// 避免 5s 后多个 timer 叠加关闭 toast。
 let paymentToastTimer = null
-let paymentMeRefreshTimer = null
+// VIP 轮询取消标记：组件卸载时置位，阻止轮询继续写 currentUser。
+let vipPollCancelled = false
 
 function checkPaymentResult() {
   const params = new URLSearchParams(window.location.search)
   const payment = params.get('payment')
-  if (payment === 'success' || payment === 'cancel') {
-    paymentToast.value = payment
-    window.history.replaceState({}, '', window.location.pathname)
-    if (payment === 'success' && isLoggedIn()) {
-      // 直接刷新当前用户（套餐变更后 VIP 状态同步），失败忽略下次 fetchMe 自然处理。
-      clearTimeout(paymentMeRefreshTimer)
-      paymentMeRefreshTimer = setTimeout(async () => {
-        try { currentUser.value = await fetchMe() } catch {}
-      }, 1000)
+  if (payment !== 'success' && payment !== 'cancel') return
+
+  paymentToast.value = payment
+  window.history.replaceState({}, '', window.location.pathname)
+
+  if (payment === 'success' && currentUser.value) {
+    // Stripe webhook 是异步落库的：用户重定向回来时 VIP 可能尚未激活。
+    // 若只 fetchMe 一次，极易读到"尚未开通"的旧状态，导致界面仍显示免费用户、只能手动刷新。
+    // 改为带次数上限的轮询，直到 is_vip 生效（网络/接口异常时静默继续，不打扰支付成功流程）。
+    refreshVipAfterPayment()
+  }
+
+  clearTimeout(paymentToastTimer)
+  paymentToastTimer = setTimeout(() => { paymentToast.value = null }, 5000)
+}
+
+const VIP_POLL_MAX = 6
+const VIP_POLL_INTERVAL = 1200
+
+async function refreshVipAfterPayment() {
+  for (let i = 0; i < VIP_POLL_MAX; i++) {
+    if (vipPollCancelled) return
+    await new Promise((resolve) => setTimeout(resolve, VIP_POLL_INTERVAL))
+    if (vipPollCancelled) return
+    try {
+      const me = await fetchMe()
+      currentUser.value = me
+      if (me && me.is_vip) return
+    } catch {
+      // 忽略本轮失败，继续轮询直到次数用尽
     }
-    clearTimeout(paymentToastTimer)
-    paymentToastTimer = setTimeout(() => { paymentToast.value = null }, 5000)
   }
 }
 
@@ -380,9 +416,9 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   delete window.__appToast
-  // 支付回调相关的两个 timer 均需清理，避免组件销毁后仍触发（修改已卸载的 ref）
+  // 支付回调相关的 timer 与轮询均需清理，避免组件销毁后仍触发（修改已卸载的 ref）
+  vipPollCancelled = true
   if (paymentToastTimer) clearTimeout(paymentToastTimer)
-  if (paymentMeRefreshTimer) clearTimeout(paymentMeRefreshTimer)
 })
 </script>
 

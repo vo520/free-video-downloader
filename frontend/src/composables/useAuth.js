@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { getSavedUser, fetchMe, logout as logoutApi, isLoggedIn } from '../api/auth.js'
+import { getSavedUser, fetchMe, logout as logoutApi, isLoggedIn, isDemoAuth, clearDemoUserCache } from '../api/auth.js'
 
 /**
  * 用户鉴权 composable（替换原 App.vue 内联 currentUser + restoreUser + handleAuthSuccess + handleLogout）。
@@ -11,14 +11,22 @@ export function useAuth({ onLogout } = {}) {
   const currentUser = ref(null)
 
   async function restoreUser() {
-    if (!isLoggedIn()) return false
+    if (!isLoggedIn() || isDemoAuth()) {
+      clearDemoUserCache()
+      return false
+    }
     const saved = getSavedUser()
     if (saved) currentUser.value = saved
     try {
       currentUser.value = await fetchMe()
       return true
-    } catch {
-      handleLogout()
+    } catch (err) {
+      // 仅当鉴权明确失效（401/403）才登出并清理本地历史；网络抖动 / 后端 5xx 时
+      // 保留本地缓存用户与 token，避免页面加载瞬间的瞬时故障把用户登出并清空历史。
+      const status = err?.response?.status
+      if (status === 401 || status === 403) {
+        handleLogout()
+      }
       return false
     }
   }

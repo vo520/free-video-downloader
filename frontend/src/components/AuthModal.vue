@@ -89,7 +89,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { register, login } from '../api/auth'
 import BaseModal from './ui/BaseModal.vue'
 import BaseButton from './ui/BaseButton.vue'
@@ -109,6 +109,30 @@ const showPassword = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const emailInput = ref(null)
+
+// AuthModal 常驻挂载（App.vue 未用 v-if），initialMode 由父组件在每次 open 前更新。
+// 若不监听 prop 变化，isLogin 只在首次初始化一次，导致点「免费注册」仍显示登录表单。
+watch(
+  () => props.initialMode,
+  (mode) => {
+    isLogin.value = mode === 'login'
+    error.value = ''
+  }
+)
+
+// 修复模式残留：用户在弹窗内手动切换过模式后关闭，父组件下次以相同 initialMode 再次打开时
+// initialMode watch 不会触发（值未变），isLogin 会停留在上次手动切换的结果，
+// 例如「点登录 → 手动切到注册 → 关闭 → 再点登录」仍显示注册表单。
+// 打开时强制按 initialMode 重置，保证每次打开的模式与入口意图一致。
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) {
+      isLogin.value = props.initialMode === 'login'
+      error.value = ''
+    }
+  }
+)
 
 // 提交按钮可用性：邮箱与密码任一为空时禁用，避免用户点击后被 HTML5 required 静默拦截造成「点了没反应」的错觉。
 // 计算时同步 trim 邮箱，与 handleSubmit 真实提交值保持一致（防止用户输入 "  test@x.com  " 时按钮仍可点）。

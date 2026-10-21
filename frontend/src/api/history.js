@@ -12,13 +12,14 @@ export async function fetchHistory({ type = null, limit = 50, offset = 0 } = {})
   const params = { limit, offset }
   if (type) params.type = type
   const { data } = await request.get('/history', { params })
-  // 后端返回 { success: true, data: { items: [], total } }：
-  //   axios response.data = {success, data:{items,total}}，
-  //   需二次解包 data.data.items（曾误写为 data.data，导致 items 为对象、.map 报错）
+  // 后端返回 { success: true, data: rows(数组), total }：
+  //   total 在顶层信封（axios response.data.total），data 字段直接是数组，
+  //   曾误取 data.data.total（数组上无此属性），导致 total 恒为 0，
+  //   HistoryDrawer 的「加载更多」守卫 items.length >= total 恒真，翻页永久失效。
   const payload = data?.data || {}
   return {
     items: Array.isArray(payload) ? payload : (payload.items || []),
-    total: payload.total || 0,
+    total: data?.total ?? (payload.total || 0),
   }
 }
 

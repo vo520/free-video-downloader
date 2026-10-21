@@ -15,7 +15,9 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+DEFAULT_FORMAT_ID = "bestvideo+bestaudio/best"
 
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
@@ -197,9 +199,17 @@ class ParseRequest(BaseModel):
 
 class DownloadRequest(BaseModel):
     url: str
-    format_id: str = "bestvideo+bestaudio/best"
+    format_id: str = DEFAULT_FORMAT_ID
     title: str = ""
     platform: str = ""
+
+    @field_validator("format_id")
+    @classmethod
+    def _normalize_format_id(cls, v: str) -> str:
+        # 前端可能传空字符串（如解析成功但无可用格式时预览/下载），
+        # Pydantic 默认值对空串不生效，此处统一归一为最佳格式，
+        # 避免空 format 直达 yt-dlp 导致 400。
+        return (v or "").strip() or DEFAULT_FORMAT_ID
 
 
 @app.get("/api/health")

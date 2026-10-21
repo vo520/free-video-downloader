@@ -1,6 +1,5 @@
 import { ref } from 'vue'
 import { parseVideo, saveVideoCache } from '../api/video.js'
-import { isLoggedIn } from '../api/auth.js'
 import { getApiError, extractErrorMsg } from '../utils/error.js'
 
 /**
@@ -18,11 +17,11 @@ let parseSeq = 0
 /**
  * 视频功能 composable（替换原 App.vue 内联 videoData/currentUrl/summaryParams/summarizing + 6 个函数）。
  * - summaryParams: Step 2 合并的双 ref 对象（key + fromHistory），所有赋值走 bumpSummary()。
- * - handleParse 内部根据 isLoggedIn() 走 refreshHistory() 或 addLocalHistory()，
- *   这两个函数由 useHistory 提供,作为参数注入（避免直接依赖 useHistory 实例）。
+ * - handleParse 内部根据宿主注入的界面登录态走 refreshHistory() 或 addLocalHistory()，
+ *   避免 request 层懒创建 demo token 后把未登录界面误判为已登录。
  * - handleHistoryDeleted 不直接读 useVideo 外的状态,自包含 currentUrl 检查。
  */
-export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
+export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed } = {}) {
   const loading = ref(false)
   const videoData = ref(null)
   const currentUrl = ref('')
@@ -61,7 +60,7 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
         videoData.value = res.data
         // parse 成功才 bump 触发 VideoSummary 重建
         bumpSummary(false)
-        if (isLoggedIn()) {
+        if (isAuthed && isAuthed()) {
           if (refreshHistory) refreshHistory()
         } else {
           if (addLocalHistory) addLocalHistory(url, res.data)
@@ -105,6 +104,9 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
       if (showToast) showToast(MISSING_SNAPSHOT_TIP, 'info')
       return
     }
+    // 作废仍在途的 parse 请求：否则慢请求返回时 mySeq === parseSeq 的守卫仍成立，
+    // 会把刚还原的历史 snapshot 覆盖成慢请求结果（race condition）。
+    parseSeq += 1
     loading.value = false
     videoData.value = snapshot
     // 兼容两种历史条目字段：服务端是 video_url，本地（addLocalHistory）是 url。
@@ -116,6 +118,14 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
     try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
   }
 
+  function clearCurrentVideo() {
+    parseSeq += 1
+    videoData.value = null
+    currentUrl.value = ''
+    loading.value = false
+    bumpSummary(false)
+  }
+
   /**
    * 抽屉删除/清空历史时的联动清理：若被删条目对应当前正在显示的视频（parse 类型且 url 一致）,
    * 同步清掉 videoData / currentUrl / 触发 VideoSummary 重建,避免用户看到陈旧内容。
@@ -123,10 +133,14 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
   function handleHistoryDeleted(item) {
     if (!item || item.type !== 'parse') return
     if (!currentUrl.value || item.video_url !== currentUrl.value) return
-    videoData.value = null
-    currentUrl.value = ''
-    bumpSummary(false)
+    // 作废在途 parse：避免删除联动清空后又被慢请求重新填充陈旧内容。
+    clearCurrentVideo()
     if (showToast) showToast('当前视频对应历史已删除', 'info')
+  }
+
+  function handleHistoryCleared() {
+    if (!videoData.value && !currentUrl.value) return
+    clearCurrentVideo()
   }
 
   return {
@@ -141,5 +155,6 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory } = {}) {
     handleParse,
     handleShowHistoryRecord,
     handleHistoryDeleted,
+    handleHistoryCleared,
   }
 }

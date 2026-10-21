@@ -7,6 +7,7 @@ import { getToken } from '../api/auth.js'
 
 const STORAGE_KEY = 'fvd_download_tasks'
 export const MAX_CONCURRENCY = 2
+const DEFAULT_FORMAT_ID = 'bestvideo+bestaudio/best'
 
 // 任务状态：queued | downloading | done | error | canceled
 const state = reactive({
@@ -46,7 +47,7 @@ function restore() {
     state.tasks = list.map((t) => ({
       id: t.id,
       url: t.url,
-      formatId: t.formatId || '',
+      formatId: t.formatId || DEFAULT_FORMAT_ID,
       title: t.title || t.url,
       status: t.status === 'done' ? 'done' : 'canceled',
       progress: t.status === 'done' ? 100 : 0,
@@ -59,14 +60,12 @@ function restore() {
   }
 }
 
-function activeCount() {
-  return state.tasks.filter(
-    (t) => t.status === 'downloading' || t.status === 'queued'
-  ).length
+function downloadingCount() {
+  return state.tasks.filter((t) => t.status === 'downloading').length
 }
 
 function pump() {
-  while (activeCount() < MAX_CONCURRENCY) {
+  while (downloadingCount() < MAX_CONCURRENCY) {
     const next = state.tasks.find((t) => t.status === 'queued')
     if (!next) break
     start(next)
@@ -83,6 +82,18 @@ async function start(task) {
   const controller = new AbortController()
   controllers.set(task.id, controller)
 
+  const TIMEOUT_MS = 10 * 60 * 1000
+  const timeoutController = new AbortController()
+  const timeoutId = setTimeout(() => {
+    const err = new Error('download timeout')
+    err.isTimeout = true
+    timeoutController.abort(err)
+  }, TIMEOUT_MS)
+  const onUserAbort = () => {
+    if (!timeoutController.signal.aborted) timeoutController.abort()
+  }
+  controller.signal.addEventListener('abort', onUserAbort, { once: true })
+
   try {
     // 显式注入 Authorization：fetch 不走 axios 拦截器，必须手动带 token；
     // 否则登录用户（含 demo 兜底用户）也会因 401 被后端拒绝，且无法触发 axios 的自动恢复链。
@@ -94,19 +105,6 @@ async function start(task) {
     // - 用户主动取消 controller → 转发 abort 到 timeoutController（fetch 收到 abort 后抛 AbortError）
     // - 网络层超时 → timeoutController 自爆 abort，fetch 抛 AbortError（catch 用 isTimeout 区分）
     // 用 timeoutController 作为 fetch 的 signal：任一 abort 都会中断 fetch。
-    const TIMEOUT_MS = 10 * 60 * 1000 // 10 分钟（视频文件较大，给充裕时间；中途断网也不至于永远 hang）
-    const timeoutController = new AbortController()
-    const timeoutId = setTimeout(() => {
-      const err = new Error('download timeout')
-      err.isTimeout = true
-      timeoutController.abort(err)
-    }, TIMEOUT_MS)
-    // 用户取消 controller → 转发到 timeoutController，让 fetch 也收到 abort
-    const onUserAbort = () => {
-      if (!timeoutController.signal.aborted) timeoutController.abort()
-    }
-    controller.signal.addEventListener('abort', onUserAbort, { once: true })
-
     const response = await fetch('/api/download', {
       method: 'POST',
       headers,
@@ -179,10 +177,11 @@ async function start(task) {
 
 function enqueue(url, formatId, title) {
   if (!url) return null
+  const normalizedFormatId = formatId || DEFAULT_FORMAT_ID
   // 去重：相同 url+formatId 且仍在队列/下载中的任务不再重复入队，避免重复下载与进度错乱。
-  const key = `${url}::${formatId || ''}`
+  const key = `${url}::${normalizedFormatId}`
   const dup = state.tasks.find(
-    (t) => `${t.url}::${t.formatId || ''}` === key && (t.status === 'queued' || t.status === 'downloading')
+    (t) => `${t.url}::${t.formatId || DEFAULT_FORMAT_ID}` === key && (t.status === 'queued' || t.status === 'downloading')
   )
   if (dup) return dup
   // 修复：原写法 `reactive({...})` 在外层 reactive 数组中再包一层 reactive 是冗余。
@@ -190,7 +189,7 @@ function enqueue(url, formatId, title) {
   const task = {
     id: uid(),
     url,
-    formatId: formatId || '',
+    formatId: normalizedFormatId,
     title: title || url,
     status: 'queued',
     progress: 0,
@@ -219,6 +218,7 @@ function cancel(id) {
 function retry(id) {
   const t = state.tasks.find((x) => x.id === id)
   if (!t) return
+  t.formatId = t.formatId || DEFAULT_FORMAT_ID
   t.status = 'queued'
   t.progress = 0
   t.error = ''
@@ -253,12 +253,18 @@ function togglePanel() {
 }
 
 // 取与某个 URL 关联的最新任务（用于主流程按钮联动进度）
-function latestTaskForUrl(url) {
-  const list = state.tasks.filter((t) => t.url === url)
+function latestTaskForUrl(url, formatId = '') {
+  const targetFormatId = formatId || ''
+  const list = state.tasks.filter(
+    (t) => t.url === url && (!targetFormatId || (t.formatId || DEFAULT_FORMAT_ID) === targetFormatId)
+  )
   if (!list.length) return null
+  // 修复：任务用 unshift 入队，state.tasks 是「新在前」，因此 list[0] 才是最新任务。
+  // 原 `list[list.length - 1]` 取到最旧任务，会导致「最新一次成功，但更早一次失败」时
+  // 仍把旧 error 透传到主流程（downloadError），用户误以为下载失败。
   return (
     list.find((t) => t.status === 'downloading' || t.status === 'queued') ||
-    list[list.length - 1]
+    list[0]
   )
 }
 

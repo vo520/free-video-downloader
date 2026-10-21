@@ -224,15 +224,15 @@ class VideoCacheDB:
             ).fetchone()
         return dict(row) if row else None
 
-    def get_videos(
+    def _build_filters(
         self,
         cache_status: str | None = None,
         platform: str | None = None,
         search: str | None = None,
         hot_only: bool = False,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[dict]:
+    ) -> tuple[str, list]:
+        """根据筛选条件构建 WHERE 子句与参数，供列表查询与计数查询复用，
+        避免两处条件不一致导致分页 total 与实际条数对不上。"""
         clauses = []
         params: list = []
         if cache_status:
@@ -247,8 +247,19 @@ class VideoCacheDB:
             clauses.append("(title LIKE ? OR video_url LIKE ? OR uploader LIKE ?)")
             like = f"%{search}%"
             params.extend([like, like, like])
-
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    def get_videos(
+        self,
+        cache_status: str | None = None,
+        platform: str | None = None,
+        search: str | None = None,
+        hot_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        where, params = self._build_filters(cache_status, platform, search, hot_only)
         sql = (
             f"SELECT * FROM video_cache{where} ORDER BY created_at DESC, id DESC "
             f"LIMIT ? OFFSET ?"
@@ -257,6 +268,19 @@ class VideoCacheDB:
         with self._conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    def count_videos(
+        self,
+        cache_status: str | None = None,
+        platform: str | None = None,
+        search: str | None = None,
+        hot_only: bool = False,
+    ) -> int:
+        """返回与筛选条件匹配的真实总条数（分页 total 契约）。"""
+        where, params = self._build_filters(cache_status, platform, search, hot_only)
+        with self._conn() as conn:
+            row = conn.execute(f"SELECT COUNT(*) FROM video_cache{where}", params).fetchone()
+        return int(row[0])
 
     def increment_hit_count(self, url: str) -> None:
         with self._conn() as conn:
