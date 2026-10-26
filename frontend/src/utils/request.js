@@ -63,7 +63,7 @@ function triggerStatusToast(status, msg) {
 }
 
 /**
- * 业务级错误响应统一处理：best-effort 静默跳过、语义化 toast、保留原 reject 给上层 catch。
+ * 业务级错误响应统一处理：best-effort 静默跳过、语义化 toast、401 强制登出同步、保留原 reject。
  * 抽成函数后，request.js 主响应拦截器 与 attachToastInterceptor 都复用同一份逻辑，
  * 避免两处分支不一致（曾实际发生：attachToastInterceptor 漏判 status===429 toast 颜色）。
  */
@@ -74,6 +74,15 @@ function handleResponseError(error) {
   }
 
   const status = error.response?.status
+
+  // 401 时通知 Vue 层同步清掉 currentUser / 历史，避免界面仍显示已登录但 token 已清。
+  // __noAuthRecover 标记的请求（如缓存归档）不触发，避免后台写入失败把用户登出。
+  if (status === 401 && !error.config?.__noAuthRecover) {
+    if (typeof window !== 'undefined' && typeof window.__appForceLogout === 'function') {
+      window.__appForceLogout()
+    }
+  }
+
   const msg =
     ERROR_MESSAGES[status] ||
     (error.message === 'Network Error' ? '网络异常，请检查连接' : null)

@@ -274,6 +274,10 @@ const { currentUser, restoreUser, handleAuthSuccess, handleLogout } = useAuth({
   // 退出登录：自动清掉本地历史，避免下次未登录看到前任账号残留。
   onLogout: () => clearLocalHistory(),
 })
+// 把 handleLogout 挂到 window，让 request.js / auth.js 的 axios 拦截器在 token 过期（401）
+// 时同步清掉 currentUser 与历史记录，避免"界面显示已登录但 token 已清"的状态撕裂。
+// __noAuthRecover 标记的请求不会触发（见 request.js handleResponseError）。
+window.__appForceLogout = () => handleLogout()
 const {
   history, loadHistory, refreshHistory, removeHistory, clearHistory,
   addLocalHistory, clearLocal,
@@ -452,6 +456,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   delete window.__appToast
+  delete window.__appForceLogout
   // 支付回调相关的 timer 与轮询均需清理，避免组件销毁后仍触发（修改已卸载的 ref）
   vipPollCancelled = true
   if (paymentToastTimer) clearTimeout(paymentToastTimer)

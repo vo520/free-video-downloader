@@ -136,6 +136,10 @@ export function attachAuthInterceptor(instance, includeRequestInterceptor = true
     (error) => {
       if (error.response?.status === 401 && !error.config?.__noAuthRecover) {
         logout()
+        // 通知 Vue 层同步清 currentUser / 历史（window.__appForceLogout 由 App.vue 注入）
+        if (typeof window !== 'undefined' && typeof window.__appForceLogout === 'function') {
+          window.__appForceLogout()
+        }
       }
       return Promise.reject(error)
     }
