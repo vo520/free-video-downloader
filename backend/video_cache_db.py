@@ -204,7 +204,9 @@ class VideoCacheDB:
 
         cols_sql = ", ".join(self._CORE_COLS)
         placeholders = ", ".join(["?"] * len(self._CORE_COLS))
-        update_sql = ", ".join(f"{c}=excluded.{c}" for c in self._CORE_COLS)
+        # 重新保存即刷新了数据与过期时间，状态需重置为 active，否则旧的 expired 状态
+        # 会让刚写入的数据被 cleanup_expired 立即删除。
+        update_sql = ", ".join(f"{c}=excluded.{c}" for c in self._CORE_COLS) + ", cache_status='active'"
 
         with self._conn() as conn:
             # 幂等 upsert：并发同 URL 写入时由唯一约束 + ON CONFLICT 保证只成功一次，

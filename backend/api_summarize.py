@@ -65,6 +65,33 @@ def _get_extractor():
     return _get_extractor._instance
 
 
+_STREAM_END = object()
+
+
+async def _iterate_in_executor(gen):
+    """在线程池中逐个拉取同步生成器的元素。
+
+    summarize_stream / chat_stream 是同步生成器，每次 next() 都会阻塞等待 LLM 网络 IO；
+    直接在 async 函数里 for 迭代会卡住整个事件循环（期间所有请求无响应）。
+    """
+    loop = asyncio.get_running_loop()
+    it = iter(gen)
+    try:
+        while True:
+            item = await loop.run_in_executor(None, next, it, _STREAM_END)
+            if item is _STREAM_END:
+                return
+            yield item
+    finally:
+        close = getattr(it, "close", None)
+        if close:
+            try:
+                close()
+            except ValueError:
+                # 任务被取消时线程可能仍在执行 next()，此时无法 close，交由 GC 回收
+                pass
+
+
 async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: Request):
     """生成 SSE 事件流"""
     allowed, remaining, message = _check_summary_permission(user)
@@ -105,7 +132,7 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
 
         # 收集总结全文，供历史回看（token 为纯文本字符串，直接拼接）。
         summary_text = ""
-        for token in summarizer.summarize_stream(full_text, req.language):
+        async for token in _iterate_in_executor(summarizer.summarize_stream(full_text, req.language)):
             # 客户端中途关闭/路由切走：直接停止 yield，不再继续调用 mindmap 与 add_history，
             # 避免 LLM API 配额与算力被白白消耗；check_and_increment_summary 已消耗的不退，
             # 避免引入新的"配额回滚"一致性复杂度（无字幕/失败扣减的设计思路一致）。
@@ -147,6 +174,12 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
                 extra={"summary": summary_text, "mindmap": mindmap_md},
             )
 
+    except asyncio.TimeoutError:
+        # TimeoutError 的 str() 为空，单独给出明确提示
+        yield ServerSentEvent(
+            data=json.dumps({"message": "总结失败: 字幕提取超时，请稍后重试"}, ensure_ascii=False),
+            event="error",
+        )
     except Exception as e:
         yield ServerSentEvent(
             data=json.dumps({"message": f"总结失败: {str(e)}"}, ensure_ascii=False),
@@ -225,7 +258,7 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
         _, remaining = check_and_increment_summary(user["id"])
 
         summarizer = _get_summarizer()
-        for token in summarizer.chat_stream(subtitle_text, req.question):
+        async for token in _iterate_in_executor(summarizer.chat_stream(subtitle_text, req.question)):
             # 客户端断连保护：与 _summarize_stream 一致，避免继续白做 LLM 调用。
             if await request.is_disconnected():
                 return
@@ -236,6 +269,11 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
 
         yield ServerSentEvent(data="[DONE]", event="done")
 
+    except asyncio.TimeoutError:
+        yield ServerSentEvent(
+            data=json.dumps({"message": "回答失败: 字幕提取超时，请稍后重试"}, ensure_ascii=False),
+            event="error",
+        )
     except Exception as e:
         yield ServerSentEvent(
             data=json.dumps({"message": f"回答失败: {str(e)}"}, ensure_ascii=False),

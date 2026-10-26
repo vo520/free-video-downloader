@@ -78,15 +78,14 @@ def _build_user_response(user: dict) -> dict:
 
 @router.post("/register")
 async def register(req: RegisterRequest):
-    if not validate_email(req.email):
+    # 先归一化再校验：避免带首尾空格的合法邮箱被拒；小写避免 User@x.com 与 user@x.com 重复注册。
+    email = req.email.strip().lower()
+    if not validate_email(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
 
     err = validate_password(req.password)
     if err:
         raise HTTPException(status_code=400, detail=err)
-
-    # 归一化为小写，避免 User@x.com 与 user@x.com 被当作两个账号（唯一约束冲突）。
-    email = req.email.strip().lower()
 
     if get_user_by_email(email):
         raise HTTPException(status_code=400, detail="该邮箱已注册")

@@ -82,7 +82,7 @@ class SaveParseLogRequest(BaseModel):
 # ===== 缓存数据API =====
 
 @router.get("/videos")
-async def get_videos(
+def get_videos(
     cache_status: Optional[str] = Query(None, description="缓存状态筛选"),
     platform: Optional[str] = Query(None, description="平台筛选"),
     search: Optional[str] = Query(None, description="搜索关键词"),
@@ -124,7 +124,7 @@ async def get_videos(
 
 
 @router.get("/videos/{url:path}")
-async def get_video(url: str):
+def get_video(url: str):
     """获取单个视频缓存详情"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -147,7 +147,7 @@ async def get_video(url: str):
 
 
 @router.post("/videos")
-async def save_video(req: SaveVideoRequest):
+def save_video(req: SaveVideoRequest):
     """保存视频缓存数据"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -179,7 +179,7 @@ async def save_video(req: SaveVideoRequest):
 
 
 @router.put("/videos/status")
-async def update_cache_status(req: UpdateCacheStatusRequest):
+def update_cache_status(req: UpdateCacheStatusRequest):
     """更新视频缓存状态"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -196,7 +196,7 @@ async def update_cache_status(req: UpdateCacheStatusRequest):
 
 
 @router.delete("/videos/{url:path}")
-async def delete_video(url: str):
+def delete_video(url: str):
     """删除视频缓存"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -218,7 +218,7 @@ async def delete_video(url: str):
 
 
 @router.put("/videos/{url:path}/hot")
-async def mark_video_hot(url: str):
+def mark_video_hot(url: str):
     """标记为热门缓存"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -237,7 +237,7 @@ async def mark_video_hot(url: str):
 # ===== 统计信息API =====
 
 @router.get("/stats")
-async def get_cache_stats():
+def get_cache_stats():
     """获取缓存统计信息"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -254,7 +254,7 @@ async def get_cache_stats():
 
 
 @router.post("/cleanup")
-async def cleanup_expired_cache():
+def cleanup_expired_cache():
     """清理过期缓存"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -273,7 +273,7 @@ async def cleanup_expired_cache():
 # ===== 缓存规则API =====
 
 @router.get("/rules")
-async def get_cache_rules():
+def get_cache_rules():
     """获取缓存规则列表"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -290,7 +290,7 @@ async def get_cache_rules():
 
 
 @router.post("/rules")
-async def save_cache_rule(req: SaveCacheRuleRequest):
+def save_cache_rule(req: SaveCacheRuleRequest):
     """保存缓存规则"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -308,7 +308,7 @@ async def save_cache_rule(req: SaveCacheRuleRequest):
 
 
 @router.delete("/rules/{rule_name}")
-async def delete_cache_rule(rule_name: str):
+def delete_cache_rule(rule_name: str):
     """删除缓存规则"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -332,7 +332,7 @@ async def delete_cache_rule(rule_name: str):
 # ===== 解析日志API =====
 
 @router.get("/logs")
-async def get_parse_logs(limit: int = Query(100, ge=1, le=500)):
+def get_parse_logs(limit: int = Query(100, ge=1, le=500)):
     """获取解析任务日志"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -350,7 +350,7 @@ async def get_parse_logs(limit: int = Query(100, ge=1, le=500)):
 
 
 @router.post("/logs")
-async def save_parse_log(req: SaveParseLogRequest):
+def save_parse_log(req: SaveParseLogRequest):
     """保存解析日志"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -370,7 +370,7 @@ async def save_parse_log(req: SaveParseLogRequest):
 # ===== 实时监控API =====
 
 @router.get("/monitor/status")
-async def get_monitor_status():
+def get_monitor_status():
     """获取实时监控状态"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -403,7 +403,7 @@ async def get_monitor_status():
 
 
 @router.get("/monitor/health")
-async def get_system_health():
+def get_system_health():
     """获取系统健康状态"""
     if not DB_ENABLED:
         raise HTTPException(status_code=503, detail="数据库未启用")
@@ -448,7 +448,7 @@ async def get_system_health():
 # ===== 导出API =====
 
 @router.get("/export")
-async def export_cache_data(
+def export_cache_data(
     format: str = Query("json", pattern="^(json|csv)$"),
     cache_status: Optional[str] = Query(None),
     platform: Optional[str] = Query(None)

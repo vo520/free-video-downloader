@@ -35,7 +35,8 @@ class CacheRuleMatcher:
         """匹配平台"""
         if not rule_platform:
             return True
-        return platform.lower() == rule_platform.lower()
+        # 数据库字段可能为 NULL（None），需兜底为空串
+        return (platform or "").lower() == rule_platform.lower()
     
     @staticmethod
     def match_duration(duration: float, min_dur: float, max_dur: float) -> bool:
@@ -51,7 +52,7 @@ class CacheRuleMatcher:
         """匹配视频质量"""
         if not rule_quality:
             return True
-        return quality.lower() == rule_quality.lower()
+        return (quality or "").lower() == rule_quality.lower()
 
 
 class VideoCacheManager:

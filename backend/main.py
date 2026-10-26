@@ -344,8 +344,12 @@ async def get_direct_url(req: DownloadRequest):
     """获取视频直链"""
     try:
         loop = asyncio.get_running_loop()
+        url = req.url.strip()
+        # 与解析/下载一致：裸数字抖音 ID 转为完整链接，否则会被 URL 校验直接拒绝
+        if url.isdigit():
+            url = f"https://www.douyin.com/video/{url}"
         # SSRF/本地文件读取防护：与解析/下载一致的匿名入口校验。
-        url = _validate_public_url(req.url)
+        url = _validate_public_url(url)
         # 与解析同级的超时（120s）：避免 yt-dlp 在 executor 线程中无限挂起占满线程
         result = await asyncio.wait_for(
             loop.run_in_executor(
@@ -358,6 +362,9 @@ async def get_direct_url(req: DownloadRequest):
         raise HTTPException(status_code=504, detail={
             "success": False, "error": "获取直链超时，请稍后重试"
         })
+    except HTTPException:
+        # URL 校验抛出的 400 原样透传，避免被下方通用分支二次包装成字符串化 detail
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail={
             "success": False,
@@ -414,8 +421,12 @@ def _validate_public_url(raw_url: str) -> str:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             continue
+        # IPv4-mapped IPv6（::ffff:127.0.0.1）按其内嵌 IPv4 判定，避免绕过
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
         if (
             ip.is_private
+            or ip.is_unspecified
             or ip.is_loopback
             or ip.is_link_local
             or ip.is_reserved

@@ -49,15 +49,19 @@ MOBILE_HEADERS = {
 _URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
 
+_DOUYIN_SUFFIXES = ("douyin.com", "iesdouyin.com")
+
+
+def _host_matches(host: Optional[str], suffixes) -> bool:
+    """严格域名匹配（等于或为其子域），避免 douyin.com.evil.com 之类的子串绕过。"""
+    host = (host or "").lower().rstrip(".")
+    return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
 def is_douyin_url(url: str) -> bool:
     """判断是否为抖音链接"""
-    douyin_domains = [
-        "douyin.com", "iesdouyin.com", "v.douyin.com",
-        "www.douyin.com", "m.douyin.com",
-    ]
     try:
-        host = urlparse(url).netloc.lower()
-        return any(d in host for d in douyin_domains)
+        return _host_matches(urlparse(url).hostname, _DOUYIN_SUFFIXES)
     except Exception:
         return False
 
@@ -131,6 +135,9 @@ class DouyinParser:
                     allow_redirects=True, headers=DEFAULT_HEADERS,
                 )
                 resp.raise_for_status()
+                # 重定向终点必须仍是抖音域名，防止被引导到任意站点后再抓取其页面数据
+                if not is_douyin_url(resp.url):
+                    raise ValueError("链接解析失败: 重定向到非抖音域名")
                 return resp.url
             except requests.RequestException as e:
                 if attempt == self.max_retries - 1:
@@ -191,7 +198,7 @@ class DouyinParser:
     def _fetch_via_share_page(self, video_id: str, resolved_url: str) -> dict:
         """从分享页面 HTML 中解析视频信息"""
         parsed = urlparse(resolved_url)
-        if "iesdouyin.com" in (parsed.netloc or ""):
+        if _host_matches(parsed.hostname, ("iesdouyin.com",)):
             share_url = resolved_url
         else:
             share_url = f"https://www.iesdouyin.com/share/video/{video_id}/"
@@ -395,21 +402,23 @@ class DouyinParser:
 
     def _download_file(self, url: str, filepath: Path, chunk_size: int = 64 * 1024):
         """下载文件到本地"""
+        temp_path = filepath.with_suffix(filepath.suffix + ".part")
         for attempt in range(self.max_retries):
             try:
-                resp = self.session.get(
+                # with 保证异常时也释放连接回连接池
+                with self.session.get(
                     url, stream=True, timeout=self.timeout, allow_redirects=True,
-                )
-                resp.raise_for_status()
-
-                temp_path = filepath.with_suffix(filepath.suffix + ".part")
-                with temp_path.open("wb") as f:
-                    for chunk in resp.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
+                ) as resp:
+                    resp.raise_for_status()
+                    with temp_path.open("wb") as f:
+                        for chunk in resp.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                f.write(chunk)
                 temp_path.replace(filepath)
                 return
             except Exception as e:
+                # 清理半截文件，避免残留占用磁盘配额
+                temp_path.unlink(missing_ok=True)
                 if attempt == self.max_retries - 1:
                     raise ValueError(f"文件下载失败: {e}")
                 time.sleep(1 * (2 ** attempt))
