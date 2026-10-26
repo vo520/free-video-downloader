@@ -35,7 +35,7 @@
             <div
               v-if="msg.role === 'assistant'"
               class="chat-prose prose prose-slate prose-sm max-w-none"
-              v-html="renderMarkdown(msg.content)"
+              v-html="renderedHtml[idx] || ''"
             ></div>
             <span v-else>{{ msg.content }}</span>
             <span
@@ -97,6 +97,40 @@ import BaseButton from '../ui/BaseButton.vue'
   const chatLoading = ref(false)
   const chatContainer = ref(null)
 
+  // 流式 Markdown 渲染节流（与 SummaryPanel / MindmapPanel 同一模式）：
+  // SSE 每个 chunk 都追加 content，若模板直接 renderMarkdown(msg.content)，
+  // 长回答会对全文反复执行 marked + DOMPurify（累计 O(n²)），输入与滚动明显卡顿。
+  // 改为 150ms 合并渲染；done / error / 异常时立即冲刷，保证最终内容一定完整落地。
+  const renderedHtml = ref({})   // 消息下标 → 已渲染 HTML
+  const dirtyIdx = new Set()     // 待重渲染的消息下标
+  let renderTimer = null
+
+  function flushRendered() {
+    if (!dirtyIdx.size) return
+    const next = { ...renderedHtml.value }
+    for (const idx of dirtyIdx) {
+      const msg = chatMessages.value[idx]
+      next[idx] = msg ? renderMarkdown(msg.content) : ''
+    }
+    dirtyIdx.clear()
+    renderedHtml.value = next
+  }
+
+  function scheduleRendered(idx) {
+    dirtyIdx.add(idx)
+    if (renderTimer) return
+    renderTimer = setTimeout(() => {
+      renderTimer = null
+      flushRendered()
+    }, 150)
+  }
+
+  // 立即渲染指定消息（终止态使用）：先标记 dirty 再冲刷，避免"流式期间无 chunk"时漏渲染。
+  function flushRenderedNow(idx) {
+    dirtyIdx.add(idx)
+    flushRendered()
+  }
+
   // 当前问答 SSE 请求的 AbortController：组件卸载或重新提问时中断旧请求，
   // 避免旧 chunk 继续接收触发已销毁组件的状态更新。
   let currentChatController = null
@@ -118,6 +152,7 @@ import BaseButton from '../ui/BaseButton.vue'
 
     const aiMessage = { role: 'assistant', content: '', loading: true }
     chatMessages.value.push(aiMessage)
+    const aiIndex = chatMessages.value.length - 1
     chatLoading.value = true
 
     // 中断上一轮可能未完成的问答请求，避免旧 chunk 污染新消息
@@ -138,11 +173,13 @@ import BaseButton from '../ui/BaseButton.vue'
         {
           answer: (data) => {
             try { aiMessage.content += JSON.parse(data) } catch { aiMessage.content += data }
+            scheduleRendered(aiIndex)
             scrollChatToBottom()
           },
           done: () => {
             aiMessage.loading = false
             chatLoading.value = false
+            flushRendered()
           },
           error: (data) => {
             aiMessage.loading = false
@@ -157,6 +194,7 @@ import BaseButton from '../ui/BaseButton.vue'
             } catch (e) {
               aiMessage.content = '❌ 回答失败'
             }
+            flushRenderedNow(aiIndex)
           },
         },
         currentChatController.signal
@@ -167,6 +205,7 @@ import BaseButton from '../ui/BaseButton.vue'
       aiMessage.loading = false
       chatLoading.value = false
       aiMessage.content = '❌ 请求失败: ' + err.message
+      flushRenderedNow(aiIndex)
     } finally {
       // 只清空本轮自己的 controller：若新提问已接管（currentChatController 指向新 controller），
       // 本 finally 不应清掉它，否则下一轮 sendQuestion 无法再 abort 新请求。
@@ -174,9 +213,13 @@ import BaseButton from '../ui/BaseButton.vue'
     }
   }
 
-  // 组件卸载时中断未完成的问答请求
+  // 组件卸载时中断未完成的问答请求 + 清理 pending 的渲染节流 timer
   onBeforeUnmount(() => {
     if (currentChatController) currentChatController.abort()
+    if (renderTimer) {
+      clearTimeout(renderTimer)
+      renderTimer = null
+    }
   })
 </script>
 

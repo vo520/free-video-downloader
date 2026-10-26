@@ -78,7 +78,7 @@
         <select
           v-model="filters.platform"
           class="h-10 px-4 border border-border rounded-xl bg-white text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          @change="loadVideos"
+          @change="applyFilters"
         >
           <option value="">全部平台</option>
           <option value="youtube">YouTube</option>
@@ -91,7 +91,7 @@
         <select
           v-model="filters.cacheStatus"
           class="h-10 px-4 border border-border rounded-xl bg-white text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          @change="loadVideos"
+          @change="applyFilters"
         >
           <option value="">全部状态</option>
           <option value="active">活跃</option>
@@ -104,7 +104,7 @@
             v-model="filters.hotOnly"
             type="checkbox"
             class="w-4 h-4 text-primary border-border rounded focus:ring-primary/20"
-            @change="loadVideos"
+            @change="applyFilters"
           />
           <span class="text-sm text-text-secondary">仅热门</span>
         </label>
@@ -425,9 +425,16 @@ async function loadVideos() {
   }
 }
 
-function searchVideos() {
+// 搜索 / 筛选变更统一入口：必须把页码重置回第 1 页。
+// 否则在第 N 页切换平台/状态/仅热门时，仍以原 offset 请求新筛选结果集，
+// offset 越界 → 列表空白、分页文案与总数矛盾。
+function applyFilters() {
   currentPage.value = 1
   loadVideos()
+}
+
+function searchVideos() {
+  applyFilters()
 }
 
 function prevPage() {
@@ -485,6 +492,11 @@ async function deleteVideo(video) {
     const response = await request.delete(`/video-cache/videos/${encodeURIComponent(video.video_url)}`, { __silent: true })
     if (response.data.success) {
       showToast('删除成功', 'success')
+      // 删除的是本页最后一条且不在第 1 页时回退一页：否则仍按原 offset 请求，
+      // 会停留在越界的空白页（分页按钮却显示还有数据）。
+      if (videos.value.length === 1 && currentPage.value > 1) {
+        currentPage.value--
+      }
       loadVideos()
       loadStats()
     } else {
@@ -505,6 +517,8 @@ async function cleanupExpired() {
     const response = await request.post('/video-cache/cleanup', {}, { __silent: true })
     if (response.data.success) {
       showToast(response.data.message || '清理完成', 'success')
+      // 清理会删除若干记录，当前页码很可能越界；重置回第 1 页再加载。
+      currentPage.value = 1
       loadVideos()
       loadStats()
     } else {

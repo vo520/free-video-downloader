@@ -348,6 +348,10 @@ import('markmap-view'),
   onMounted(() => {
     document.addEventListener('fullscreenchange', onFullscreenChange)
     document.addEventListener('webkitfullscreenchange', onFullscreenChange)
+    // 本组件由 VideoSummary 以 v-if 按 tab 按需挂载：若挂载时 mindmapMarkdown 已有值
+    // （常见于「总结已完成 → 用户才切到思维导图 tab」），上面的 watch 只在值**变化**时触发，
+    // 不会补渲染，导致思维导图区域永久空白。此处补一次首帧渲染（与 watch 共用 debounce 不冲突）。
+    if (props.mindmapMarkdown) scheduleRender(props.mindmapMarkdown)
   })
   onBeforeUnmount(() => {
     document.removeEventListener('fullscreenchange', onFullscreenChange)

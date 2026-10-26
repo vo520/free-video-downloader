@@ -46,44 +46,25 @@ async function handleSSEStream(response, callbacks, signal) {
       const { done, value } = await reader.read()
       if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
 
-    for (const line of lines) {
-      if (line === '') {
-        dispatch()
-        continue
-      }
+      for (const line of lines) {
+        if (line === '') {
+          dispatch()
+          continue
+        }
 
-      if (line.startsWith(':')) continue
+        if (line.startsWith(':')) continue
 
-      const colonIdx = line.indexOf(':')
-      if (colonIdx < 0) continue
+        const colonIdx = line.indexOf(':')
+        if (colonIdx < 0) continue
 
-      const field = line.slice(0, colonIdx)
-      let val = line.slice(colonIdx + 1)
-      if (val.startsWith(' ')) val = val.slice(1)
-
-      if (field === 'event') {
-        currentEvent = val
-      } else if (field === 'data') {
-        hasData = true
-        dataLines.push(val)
-      }
-    }
-  }
-  // 处理流末残留行：若最后一段数据无结尾换行，buffer 里可能还留着末事件（含 done），
-  // 不处理会导致 done 事件丢失、loading 永久转圈。
-  if (buffer) {
-    const line = buffer
-    buffer = ''
-    if (line !== '' && !line.startsWith(':')) {
-      const colonIdx = line.indexOf(':')
-      if (colonIdx >= 0) {
         const field = line.slice(0, colonIdx)
         let val = line.slice(colonIdx + 1)
         if (val.startsWith(' ')) val = val.slice(1)
+
         if (field === 'event') {
           currentEvent = val
         } else if (field === 'data') {
@@ -92,8 +73,27 @@ async function handleSSEStream(response, callbacks, signal) {
         }
       }
     }
-  }
-  dispatch()
+    // 处理流末残留行：若最后一段数据无结尾换行，buffer 里可能还留着末事件（含 done），
+    // 不处理会导致 done 事件丢失、loading 永久转圈。
+    if (buffer) {
+      const line = buffer
+      buffer = ''
+      if (line !== '' && !line.startsWith(':')) {
+        const colonIdx = line.indexOf(':')
+        if (colonIdx >= 0) {
+          const field = line.slice(0, colonIdx)
+          let val = line.slice(colonIdx + 1)
+          if (val.startsWith(' ')) val = val.slice(1)
+          if (field === 'event') {
+            currentEvent = val
+          } else if (field === 'data') {
+            hasData = true
+            dataLines.push(val)
+          }
+        }
+      }
+    }
+    dispatch()
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort)
   }
