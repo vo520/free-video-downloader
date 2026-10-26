@@ -122,7 +122,10 @@ import BaseButton from '../ui/BaseButton.vue'
 
     // 中断上一轮可能未完成的问答请求，避免旧 chunk 污染新消息
     if (currentChatController) currentChatController.abort()
-    currentChatController = new AbortController()
+    // 局部保存引用：旧请求的 finally 会无条件执行 currentChatController = null，
+    // 若无引用比对，快速连续提问时会把本轮新 controller 误清，导致下一轮无法 abort。
+    const controller = new AbortController()
+    currentChatController = controller
 
     await nextTick()
     scrollChatToBottom()
@@ -165,7 +168,9 @@ import BaseButton from '../ui/BaseButton.vue'
       chatLoading.value = false
       aiMessage.content = '❌ 请求失败: ' + err.message
     } finally {
-      currentChatController = null
+      // 只清空本轮自己的 controller：若新提问已接管（currentChatController 指向新 controller），
+      // 本 finally 不应清掉它，否则下一轮 sendQuestion 无法再 abort 新请求。
+      if (currentChatController === controller) currentChatController = null
     }
   }
 

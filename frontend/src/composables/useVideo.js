@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { parseVideo, saveVideoCache } from '../api/video.js'
 import { getApiError, extractErrorMsg } from '../utils/error.js'
+import { normalizeHistoryUrl } from './useHistory.js'
 
 /**
  * 历史 snapshot 缺失时的统一兜底提示文案。
@@ -132,7 +133,11 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
    */
   function handleHistoryDeleted(item) {
     if (!item || item.type !== 'parse') return
-    if (!currentUrl.value || item.video_url !== currentUrl.value) return
+    // 归一化比对：item.video_url 是后端入库前归一化后的形态，currentUrl 是用户原始输入；
+    // 两侧不归一化直接 === 比较，用户粘贴带 www./http/fragment 的 URL 时会漏判，
+    // 导致历史已删除但 videoData 仍残留陈旧内容。
+    if (!currentUrl.value) return
+    if (normalizeHistoryUrl(item.video_url) !== normalizeHistoryUrl(currentUrl.value)) return
     // 作废在途 parse：避免删除联动清空后又被慢请求重新填充陈旧内容。
     clearCurrentVideo()
     if (showToast) showToast('当前视频对应历史已删除', 'info')

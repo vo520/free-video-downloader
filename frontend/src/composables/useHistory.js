@@ -33,6 +33,10 @@ function _normalizeUrl(url) {
   return u
 }
 
+// 导出给 useVideo.handleHistoryDeleted 做"删除历史是否对应当前视频"的归一化比对：
+// currentUrl 存的是用户原始输入，服务端 video_url 已归一化，两侧必须先对齐再比较。
+export { _normalizeUrl as normalizeHistoryUrl }
+
 /**
  * 历史管理 composable（替换原 App.vue 内联 history + 6 个函数）。
  * - 服务端 / localStorage 双源策略保留在 composable 内部:
