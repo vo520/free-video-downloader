@@ -313,9 +313,9 @@ function togglePip() {
   if (!v) return
   try {
     if (document.pictureInPictureElement && document.pictureInPictureElement !== v) {
-      document.exitPictureInPicture()
+      document.exitPictureInPicture().catch(() => {})
     } else if (v.requestPictureInPicture) {
-      v.requestPictureInPicture()
+      v.requestPictureInPicture().catch(() => showToast('当前浏览器不支持画中画', 'info'))
     }
   } catch {
     showToast('当前浏览器不支持画中画', 'info')

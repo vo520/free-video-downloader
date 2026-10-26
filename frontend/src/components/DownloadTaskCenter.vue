@@ -166,12 +166,13 @@ const maxConcurrency = MAX_CONCURRENCY
 // 清除已完成任务后给 toast 反馈（与 HistoryDrawer / App.vue 删除/清空风格一致），
 // 同时把对应 id 从 notified 集合移除，否则 next tick 状态变化可能因 id 已通知而跳过本次成功提示。
 function onClearFinished() {
-  const n = finishedCount.value
+  const clearedIds = state.tasks
+    .filter((t) => t.status === 'done' || t.status === 'canceled')
+    .map((t) => t.id)
   clearFinished()
-  if (n > 0) {
-    // 状态变化 toast 由 watch 触发；这里只需补一条明确数量的清空反馈即可。
-    // 但为避免与每个任务的 success toast 重复刷屏，clearFinished 直接给一条汇总更友好。
-    showToast(n > 0 ? `已清除 ${n} 条已完成任务` : '已清除', 'success')
+  clearedIds.forEach((id) => notified.value.delete(id))
+  if (clearedIds.length > 0) {
+    showToast(`已清除 ${clearedIds.length} 条已完成任务`, 'success')
   }
 }
 
