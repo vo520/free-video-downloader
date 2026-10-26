@@ -455,16 +455,21 @@ async def proxy_thumbnail(url: str = Query(..., description="缩略图URL")):
                 if not ip:
                     raise HTTPException(status_code=400, detail="不支持的缩略图地址")
                 # 用已校验的固定 IP 直连，Host 头保留原主机名，避免请求时再次解析 DNS 造成重绑定
-                target = f"{parsed.scheme}://{ip}{parsed.path or '/'}"
+                ip_host = f"[{ip}]" if ":" in ip else ip
+                port = f":{parsed.port}" if parsed.port else ""
+                target = f"{parsed.scheme}://{ip_host}{port}{parsed.path or '/'}"
                 if parsed.query:
                     target += "?" + parsed.query
+                host_header = parsed.hostname + port
                 resp = await client.get(
                     target,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Referer": current,
-                        "Host": parsed.hostname,
+                        "Host": host_header,
                     },
+                    # HTTPS 用原主机名做 SNI 与证书校验，否则按 IP 校验证书必然失败
+                    extensions={"sni_hostname": parsed.hostname},
                 )
                 if resp.status_code in _REDIRECT_STATUS and resp.headers.get("location"):
                     current = urljoin(current, resp.headers["location"])

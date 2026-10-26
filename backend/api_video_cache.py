@@ -185,12 +185,19 @@ def update_cache_status(req: UpdateCacheStatusRequest):
         raise HTTPException(status_code=503, detail="数据库未启用")
     
     try:
-        video_cache_db.update_cache_status(req.url, req.status, req.expires_at)
+        try:
+            updated = video_cache_db.update_cache_status(req.url, req.status, req.expires_at)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="expires_at 时间格式无效")
+        if not updated:
+            raise HTTPException(status_code=404, detail="视频缓存不存在")
         
         return JSONResponse(content={
             "success": True,
             "message": "缓存状态更新成功"
         })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -224,12 +231,15 @@ def mark_video_hot(url: str):
         raise HTTPException(status_code=503, detail="数据库未启用")
     
     try:
-        video_cache_db.mark_as_hot(url)
+        if not video_cache_db.mark_as_hot(url):
+            raise HTTPException(status_code=404, detail="视频缓存不存在")
         
         return JSONResponse(content={
             "success": True,
             "message": "已标记为热门缓存"
         })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

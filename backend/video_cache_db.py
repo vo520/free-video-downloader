@@ -34,6 +34,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _to_utc_iso(value: str) -> str:
+    """把外部传入的时间字符串规范为 UTC isoformat（无时区视为 UTC），
+    使 cache_expires_at 与 _now() 格式一致、可按字符串比较。非法格式抛 ValueError。"""
+    dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def _normalize_url(url: str) -> str:
     """URL 标准化：小写 scheme 与 netloc，其余保持不变（用于去重哈希）。"""
     from urllib.parse import urlparse, urlunparse
@@ -292,31 +301,36 @@ class VideoCacheDB:
                 (_now(), url),
             )
 
-    def update_cache_status(self, url: str, status: str, expires_at: str | None = None) -> None:
+    def update_cache_status(self, url: str, status: str, expires_at: str | None = None) -> bool:
+        if expires_at:
+            # 统一转成带 UTC 时区的 isoformat，保证与 _now() 按字符串比较时语义正确
+            expires_at = _to_utc_iso(expires_at)
         with self._conn() as conn:
             if expires_at:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE video_cache SET cache_status=?, cache_expires_at=?, updated_at=? "
                     "WHERE video_url=?",
                     (status, expires_at, _now(), url),
                 )
             else:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE video_cache SET cache_status=?, updated_at=? WHERE video_url=?",
                     (status, _now(), url),
                 )
+        return cur.rowcount > 0
 
     def delete_video(self, url: str) -> bool:
         with self._conn() as conn:
             cur = conn.execute("DELETE FROM video_cache WHERE video_url=?", (url,))
         return cur.rowcount > 0
 
-    def mark_as_hot(self, url: str) -> None:
+    def mark_as_hot(self, url: str) -> bool:
         with self._conn() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE video_cache SET is_hot=1, updated_at=? WHERE video_url=?",
                 (_now(), url),
             )
+        return cur.rowcount > 0
 
     def get_stats(self) -> dict:
         with self._conn() as conn:

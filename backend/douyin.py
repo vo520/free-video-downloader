@@ -7,13 +7,15 @@
 import base64
 import json
 import hashlib
+import ipaddress
 import os
 import re
+import socket
 import time
 import logging
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urljoin
 
 import requests
 
@@ -56,6 +58,30 @@ def _host_matches(host: Optional[str], suffixes) -> bool:
     """严格域名匹配（等于或为其子域），避免 douyin.com.evil.com 之类的子串绕过。"""
     host = (host or "").lower().rstrip(".")
     return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
+_MAX_REDIRECT_HOPS = 5
+
+
+def _is_public_http_url(url: str) -> bool:
+    """仅允许解析到公网地址的 http/https URL。"""
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except (socket.gaierror, UnicodeError, ValueError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global:
+            return False
+    return True
 
 
 def is_douyin_url(url: str) -> bool:
@@ -405,15 +431,26 @@ class DouyinParser:
         temp_path = filepath.with_suffix(filepath.suffix + ".part")
         for attempt in range(self.max_retries):
             try:
-                # with 保证异常时也释放连接回连接池
-                with self.session.get(
-                    url, stream=True, timeout=self.timeout, allow_redirects=True,
-                ) as resp:
-                    resp.raise_for_status()
-                    with temp_path.open("wb") as f:
-                        for chunk in resp.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
+                current = url
+                # 手动跟随重定向：media_url 来自第三方响应，每一跳都须校验为公网地址（防 SSRF）
+                for _ in range(_MAX_REDIRECT_HOPS + 1):
+                    if not _is_public_http_url(current):
+                        raise ValueError("媒体地址指向非公网主机")
+                    # with 保证异常时也释放连接回连接池
+                    with self.session.get(
+                        current, stream=True, timeout=self.timeout, allow_redirects=False,
+                    ) as resp:
+                        if resp.is_redirect and resp.headers.get("location"):
+                            current = urljoin(current, resp.headers["location"])
+                            continue
+                        resp.raise_for_status()
+                        with temp_path.open("wb") as f:
+                            for chunk in resp.iter_content(chunk_size=chunk_size):
+                                if chunk:
+                                    f.write(chunk)
+                    break
+                else:
+                    raise ValueError("媒体地址重定向次数过多")
                 temp_path.replace(filepath)
                 return
             except Exception as e:
