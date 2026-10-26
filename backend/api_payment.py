@@ -12,6 +12,7 @@ from database import (
     create_order,
     update_order_stripe_session,
     complete_order,
+    fail_order,
     get_user_orders,
     get_user_by_id,
 )
@@ -102,6 +103,12 @@ async def create_checkout_session(req: CreateCheckoutRequest, user: dict = Depen
         }
 
     except stripe.StripeError as e:
+        # 回滚刚落的 pending 订单：会话创建失败不会有 webhook 回调，
+        # 不标记会在用户订单列表里残留无法支付也无法关闭的孤儿记录。
+        try:
+            fail_order(order_no, reason=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail=f"创建支付会话失败: {str(e)}")
 
 

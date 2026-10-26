@@ -169,9 +169,11 @@ class VideoCacheDB:
         "cache_expires_at", "updated_at",
     )
 
-    def save_video(self, video_data: dict) -> bool:
+    def save_video(self, video_data: dict, ttl_seconds: int | None = None) -> bool:
         """保存/更新一条视频缓存。重复 URL 做字段更新（保留命中数与热门标记）。
-        默认写入 TTL 过期时间（now+1天，UTC），使缓存具备时间生命周期，避免无限膨胀。"""
+
+        ttl_seconds 由调用方按缓存规则计算后传入（video_cache_manager.get_cache_ttl）；
+        未传或非法时回退默认 1 天，保证缓存始终具备时间生命周期，避免无限膨胀。"""
         url = (video_data.get("url") or "").strip()
         if not url:
             return False
@@ -199,8 +201,15 @@ class VideoCacheDB:
         download_url = info.get("download_url") or meta.get("download_url")
         formats = info.get("formats")
         available_formats = json.dumps(formats, ensure_ascii=False) if isinstance(formats, (list, dict)) else None
-        # 默认 TTL：1 天（与 get_cache_ttl 默认值一致），统一用 UTC 字符串，避免时区混用导致比较错乱。
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=86400)).isoformat()
+        # TTL：优先用调用方按缓存规则算出的值，非法/缺省时回退 1 天（与 get_cache_ttl 默认一致）。
+        try:
+            effective_ttl = int(ttl_seconds) if ttl_seconds else 86400
+        except (TypeError, ValueError):
+            effective_ttl = 86400
+        if effective_ttl <= 0:
+            effective_ttl = 86400
+        # 统一用 UTC 字符串，避免时区混用导致比较错乱。
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=effective_ttl)).isoformat()
 
         now = _now()
         # 与 _CORE_COLS 一一对应的参数

@@ -134,7 +134,9 @@ def get_video(url: str):
         if not video:
             raise HTTPException(status_code=404, detail="视频缓存不存在")
         
-        video_cache_db.increment_hit_count(url)
+        # 走 manager 的命中处理：累加命中数并在达到阈值(100)时自动标记热门，
+        # 否则 is_hot 只能靠手动接口设置、热门统计恒为 0。
+        video_cache_manager.process_cache_hit(url)
         
         return JSONResponse(content={
             "success": True,
@@ -160,8 +162,22 @@ def save_video(req: SaveVideoRequest):
             "success": req.success,
             "error": req.error
         }
-        
-        success = video_cache_db.save_video(video_data)
+
+        # 接通 video_cache_manager：按已配置的缓存规则计算本视频的 TTL，
+        # 否则 cache_rules.ttl_seconds 形同虚设、新建缓存恒为硬编码 24h。失败回退默认。
+        info = req.video_info or {}
+        meta = req.metadata or {}
+        try:
+            ttl_seconds = video_cache_manager.get_cache_ttl(
+                req.url,
+                info.get("platform") or "",
+                meta.get("quality") or "",
+                meta.get("duration") or 0,
+            )
+        except Exception:
+            ttl_seconds = None
+
+        success = video_cache_db.save_video(video_data, ttl_seconds=ttl_seconds)
 
         # 接通 video_cache_manager：每次保存后按内置节流(默认 1h)自动清理过期缓存，
         # 避免过期条目无限堆积。best-effort，失败不影响保存主流程。
@@ -258,6 +274,39 @@ def get_cache_stats():
         return JSONResponse(content={
             "success": True,
             "data": stats
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validate")
+def validate_cache(url: str = Query(..., description="待校验的视频 URL")):
+    """校验单条缓存是否有效（是否过期/解析失败）。
+
+    走 Query 参数而非 /videos/{url:path}/validate，避免被 /videos/{url:path} 通配路由吞掉。
+    """
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="数据库未启用")
+
+    try:
+        return JSONResponse(content={
+            "success": True,
+            "data": video_cache_manager.validate_cache(url)
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/lifecycle")
+def get_lifecycle_report():
+    """获取缓存生命周期报告（按龄分布、规则汇总与优化建议）。"""
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="数据库未启用")
+
+    try:
+        return JSONResponse(content={
+            "success": True,
+            "data": video_cache_manager.get_lifecycle_report()
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

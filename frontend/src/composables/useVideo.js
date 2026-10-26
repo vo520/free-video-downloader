@@ -66,7 +66,18 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
         } else {
           if (addLocalHistory) addLocalHistory(url, res.data)
         }
-        // 解析结果 best-effort 归档到视频缓存,供后台管理查看（失败不影响体验）
+        // 解析结果 best-effort 归档到视频缓存,供后台管理查看（失败不影响体验）。
+        // 补齐直链与格式清单：后台「播放/下载/复制」按钮依赖 direct_url/download_url，
+        // 不做归档时这两列恒为空、按钮永远不显示。抖音解析结果在 formats[]._direct_url
+        // 内携带直链；yt-dlp 侧解析阶段无直链（播放时才按需拉取），故有则带上、无则留空，
+        // 由后台按字段是否为空自行隐藏按钮。
+        const formats = Array.isArray(res.data.formats) ? res.data.formats : []
+        const playable = formats.find((f) => f && f._direct_url)
+        const mediaUrl = playable ? playable._direct_url : ''
+        const fileSize = formats.reduce(
+          (max, f) => Math.max(max, (f && (f.filesize || f.filesize_approx)) || 0),
+          0
+        )
         saveVideoCache({
           url,
           video_info: {
@@ -75,10 +86,15 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
             title: res.data.title,
             uploader: res.data.uploader,
             thumbnail: res.data.thumbnail,
+            direct_url: mediaUrl,
+            download_url: mediaUrl,
+            formats,
           },
           metadata: {
             duration: res.data.duration,
-            file_size: null,
+            file_size: fileSize || null,
+            quality: playable && playable.height ? `${playable.height}p` : '',
+            format: playable ? playable.format_id : '',
           },
           success: true,
         }).catch(() => {})

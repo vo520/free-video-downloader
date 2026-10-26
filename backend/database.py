@@ -386,6 +386,22 @@ def update_order_stripe_session(order_no: str, session_id: str):
         )
 
 
+def fail_order(order_no: str, reason: str = "") -> bool:
+    """把仍处于 pending 的订单标记为 failed。
+
+    用于 create-checkout 创建 Stripe 会话失败时回滚：否则会残留一条永远不会有
+    webhook 回调的孤儿 pending 订单（用户订单列表里出现无法支付也无法关闭的记录）。
+    仅翻转 pending，避免覆盖已支付订单（极端并发下 webhook 先到）。
+    """
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE orders SET status = 'failed', updated_at = ? "
+            "WHERE order_no = ? AND status = 'pending'",
+            (datetime.now(timezone.utc).isoformat(), order_no),
+        )
+        return cur.rowcount > 0
+
+
 def complete_order(session_id: str, payment_intent_id: str) -> dict | None:
     """
     支付完成时更新订单状态、激活 VIP。
