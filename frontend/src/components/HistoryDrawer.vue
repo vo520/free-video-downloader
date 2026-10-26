@@ -219,6 +219,13 @@ import EmptyState from './ui/EmptyState.vue'
 import VideoThumbnail from './VideoThumbnail.vue'
 import BaseButton from './ui/BaseButton.vue'
 
+const props = defineProps({
+  // 由宿主（App.vue）在「落地页最近解析 / 顶栏」侧删除历史时透传的被删 id 列表；
+  // 抽屉据此把同一条目移出自身列表，避免两处视图消费同一份服务端数据却不同步。
+  removedIds: { type: Array, default: () => [] },
+  // 宿主侧清空历史成功的递增序号；变化即清空抽屉列表。
+  clearSeq: { type: Number, default: 0 },
+})
 const emit = defineEmits(['reparse', 'view-history-record', 'history-deleted', 'history-cleared'])
 const downloadManager = useDownloadManager()
 // 复用 App.vue 已 provide 的全局轻提示（与首页删除/清空已有 toast 风格统一）。
@@ -449,6 +456,25 @@ watch(open, (v) => {
   expandedId.value = null
   if (items.value.length === 0) loadItems()
   nextTick(() => searchInput.value?.focus())
+})
+
+// 宿主（落地页最近解析 / 顶栏）删除历史 → 同步移出抽屉列表。
+// 按 id 集合过滤（幂等，宿主累积透传也不会重复生效），并按实际移除条数修正 total。
+watch(() => props.removedIds, (ids) => {
+  if (!ids || ids.length === 0) return
+  const set = new Set(ids)
+  const before = items.value.length
+  items.value = items.value.filter((x) => !set.has(x.id))
+  total.value = Math.max(0, total.value - (before - items.value.length))
+})
+
+// 宿主清空历史成功 → 同步清空抽屉列表（含分页总数与筛选态）。
+watch(() => props.clearSeq, (v, prev) => {
+  if (!v || v === prev) return
+  items.value = []
+  total.value = 0
+  search.value = ''
+  expandedId.value = null
 })
 
 // 卸载时清理未触发的 timer，避免组件已销毁 timer 才触发 ref 操作报错

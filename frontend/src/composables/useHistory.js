@@ -116,22 +116,26 @@ export function useHistory({ showToast, isAuthed } = {}) {
     await _loadParseHistory('keep')
   }
 
+  /**
+   * 删除单条历史。返回被删除的服务端 id（未登录的本地分支、或删除失败时返回 null），
+   * 宿主据此把同一条目同步移出 HistoryDrawer 列表（两个视图消费同一份服务端数据）。
+   */
   async function removeHistory(urlOrId) {
     if (hasAuthedUser()) {
       const item = history.value.find(h => (h.id != null ? String(h.id) === String(urlOrId) : h.url === urlOrId))
       if (!item || item.id == null) {
         history.value = history.value.filter(h => h.url !== urlOrId)
-        return
+        return null
       }
       try {
         await deleteHistoryItem(item.id)
       } catch (err) {
         if (showToast) showToast('删除失败，请稍后重试', 'error')
-        return
+        return null
       }
       history.value = history.value.filter(h => h.id !== item.id)
       if (showToast) showToast('已删除', 'success')
-      return
+      return item.id
     }
     history.value = history.value.filter(h => _normalizeUrl(h.url) !== _normalizeUrl(urlOrId))
     try {
@@ -140,26 +144,29 @@ export function useHistory({ showToast, isAuthed } = {}) {
       // eslint-disable-next-line no-console
       console.warn('[useHistory] removeHistory localStorage persist failed', err)
     }
+    return null
   }
 
+  /** 清空历史。返回是否成功（宿主据此决定是否同步清空 HistoryDrawer 列表）。 */
   async function clearHistory() {
     if (hasAuthedUser()) {
       try {
         await clearMyHistory()
       } catch (err) {
         if (showToast) showToast('清空失败，请稍后重试', 'error')
-        return
+        return false
       }
       const n = history.value.length
       history.value = []
       if (showToast) showToast(n > 0 ? `已清空 ${n} 条记录` : '已清空', 'success')
-      return
+      return true
     }
     history.value = []
     try { localStorage.removeItem(HISTORY_KEY) } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[useHistory] clearHistory localStorage remove failed', err)
     }
+    return true
   }
 
   /**

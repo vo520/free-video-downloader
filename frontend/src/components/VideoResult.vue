@@ -44,19 +44,8 @@
           </button>
         </div>
         <template v-else>
-          <img
-            v-if="video.thumbnail"
-            :src="thumbnailUrl"
-            :alt="video.title"
-            class="w-full h-full object-cover"
-            @error="(e) => e.target.style.display = 'none'"
-          />
-          <div v-else class="w-full h-full flex items-center justify-center text-text-muted">
-            <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
+          <!-- 封面：统一复用 VideoThumbnail（无图/加载失败时降级为占位图标，替代原 DOM hack） -->
+          <VideoThumbnail :url="thumbnailUrl" :alt="video.title" size="lg" />
           <!-- 预览按钮 -->
           <button
             v-if="previewUrl || videoUrl"
@@ -243,6 +232,7 @@ import { copyText } from '../utils/clipboard.js'
 import { pickBestFormat, formatResolution, formatViewCount } from '../utils/format.js'
 import Spinner from './ui/Spinner.vue'
 import BaseButton from './ui/BaseButton.vue'
+import VideoThumbnail from './VideoThumbnail.vue'
 
 const props = defineProps({
   video: { type: Object, required: true },

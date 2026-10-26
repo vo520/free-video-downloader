@@ -9,8 +9,8 @@
       @logout="handleLogout"
       @open-vip="handleOpenVip"
       @reparse="handleParse"
-      @remove-history="removeHistory"
-      @clear-history="clearHistory"
+      @remove-history="onRemoveHistory"
+      @clear-history="onClearHistory"
     />
     <main class="flex-1">
       <HeroSection
@@ -64,7 +64,7 @@
                 </svg>
                 最近解析
               </h3>
-              <BaseButton @click="clearHistory" variant="ghost" class="!text-xs !text-text-muted !hover:text-red-500">清空记录</BaseButton>
+              <BaseButton @click="onClearHistory" variant="ghost" class="!text-xs !text-text-muted !hover:text-red-500">清空记录</BaseButton>
             </div>
             <ul class="space-y-2">
               <li
@@ -99,7 +99,7 @@
                   shape="square"
                   class="opacity-0 group-hover:opacity-100 hover:text-red-500"
                   title="删除"
-                  @click.stop="removeHistory(item.url)"
+                  @click.stop="onRemoveHistory(item.url)"
                 >
                   <template #icon>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -216,13 +216,16 @@
 
     <!-- 登录用户云端历史（抽屉形态，仅在已登录时挂载；
          @reparse 走原解析流程，@view-history-record 从数据库 snapshot 直接还原显示；
-         @history-deleted 联动清掉当前 videoData 避免陈旧显示） -->
+         @history-deleted 联动清掉当前 videoData 避免陈旧显示；
+         removed-ids / clear-seq 让落地页或顶栏的删除/清空同步反映到抽屉列表（反之亦然） -->
     <HistoryDrawer
       v-if="currentUser"
+      :removed-ids="drawerRemovedIds"
+      :clear-seq="drawerClearSeq"
       @reparse="handleParse"
       @view-history-record="handleShowHistoryRecord"
-      @history-deleted="handleHistoryDeleted"
-      @history-cleared="handleHistoryCleared"
+      @history-deleted="onDrawerHistoryDeleted"
+      @history-cleared="onDrawerHistoryCleared"
     />
   </div>
 </template>
@@ -282,6 +285,39 @@ const {
   handleSummarize, handleSummarizeLoadingChange,
   handleParse, handleShowHistoryRecord, handleHistoryDeleted, handleHistoryCleared,
 } = useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed: () => !!currentUser.value })
+
+// ===== 历史记录双视图同步 =====
+// 登录用户有两处消费同一份服务端历史：落地页「最近解析」列表（useHistory.history）与
+// HistoryDrawer 自己的分页列表。两者各自维护状态，故用信号互相同步，避免
+// 「一处删了、另一处仍显示，点进去还能还原出已删视频」。
+const drawerRemovedIds = ref([])   // 待抽屉移除的 id（累积；抽屉侧按集合过滤，幂等）
+const drawerClearSeq = ref(0)      // 递增序号：抽屉侧据此清空列表
+
+async function onRemoveHistory(urlOrId) {
+  const removedId = await removeHistory(urlOrId)
+  if (removedId != null) drawerRemovedIds.value = drawerRemovedIds.value.concat(removedId)
+}
+
+async function onClearHistory() {
+  // 仅当服务端确实清空成功才通知抽屉，避免接口失败时把抽屉也清成空
+  if (await clearHistory()) {
+    drawerClearSeq.value += 1
+    drawerRemovedIds.value = []
+  }
+}
+
+// 抽屉删除/清空：同步落地页「最近解析」列表 + 联动清理当前显示的视频
+function onDrawerHistoryDeleted(item) {
+  handleHistoryDeleted(item)
+  if (item && item.id != null) {
+    history.value = history.value.filter((h) => h.id !== item.id)
+  }
+}
+
+function onDrawerHistoryCleared() {
+  handleHistoryCleared()
+  history.value = []
+}
 
 // ===== 鉴权协调：登录成功清本地历史 + 拉服务端历史 =====
 // useAuth.handleAuthSuccess 只更新 currentUser，宿主协调历史刷新（与 useHistory 隔离）。

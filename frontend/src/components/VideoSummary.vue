@@ -95,7 +95,6 @@ import ChatPanel from './panels/ChatPanel.vue'
   const summaryText = ref('')
   const subtitleData = ref({ segments: [], has_subtitle: false, full_text: '' })
   const mindmapMarkdown = ref('')
-  const chatMessages = ref([])
   const quotaInfo = ref(null)
 
   watch(loading, (val) => {
@@ -111,7 +110,6 @@ import ChatPanel from './panels/ChatPanel.vue'
     loading.value = true
     summaryText.value = ''
     mindmapMarkdown.value = ''
-    chatMessages.value = []
     quotaInfo.value = null
     loadingMessage.value = '正在提取视频字幕...'
 

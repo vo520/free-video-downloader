@@ -330,11 +330,10 @@ import { copyText } from '../utils/clipboard.js'
 import { downloadBlob } from '../utils/file.js'
 import { formatBytes, formatTime, formatDateTime } from '../utils/format.js'
 import { getApiError } from '../utils/error.js'
-import Spinner from './ui/Spinner.vue'
 import EmptyState from './ui/EmptyState.vue'
+import VideoThumbnail from './VideoThumbnail.vue'
 import BaseButton from './ui/BaseButton.vue'
 import BaseModal from './ui/BaseModal.vue'
-import VideoThumbnail from './VideoThumbnail.vue'
 
 // 业务 success:false 与异常 catch 分支的兜底文案（统一提取，避免 4 处重复）。
 const OPERATION_FAILED_TIP = '操作失败，请重试'
