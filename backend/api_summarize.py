@@ -65,6 +65,29 @@ def _get_extractor():
     return _get_extractor._instance
 
 
+def _validate_video_url(raw_url: str) -> str | None:
+    """校验 AI 总结/问答传入的视频 URL。
+
+    字幕提取会把 url 交给 yt-dlp / httpx 发起服务端请求，因此与 /api/parse、
+    /api/download、/api/direct-url 一样必须拦掉 file:// 与内网地址，否则任何登录
+    用户都能借本接口探测内网服务与云元数据（SSRF）。返回 None 表示合法，否则返回
+    可直接回给前端的错误文案。延迟 import main 以避免与 main 的 include_router 循环导入。
+    """
+    from main import _validate_public_url
+
+    try:
+        _validate_public_url(raw_url)
+        return None
+    except HTTPException as e:
+        detail = e.detail
+        msg = detail.get("error") if isinstance(detail, dict) else str(detail)
+        # 主机解析失败时不拦截：解析不出地址就不存在可被 SSRF 命中的目标，真实抓取时
+        # yt-dlp 会自然失败；同时避免离线环境（CI/单测）因 DNS 不可用被误判为非法链接。
+        if msg == "无法解析视频链接主机":
+            return None
+        return msg or "不支持的视频链接"
+
+
 _STREAM_END = object()
 
 
@@ -98,6 +121,15 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
     if not allowed:
         yield ServerSentEvent(
             data=json.dumps({"message": message, "need_login": user is None, "need_vip": user is not None}, ensure_ascii=False),
+            event="error",
+        )
+        return
+
+    # SSRF 防护：拒绝 file:// 与内网地址后再进入字幕提取/LLM 调用。
+    url_error = _validate_video_url(req.url)
+    if url_error:
+        yield ServerSentEvent(
+            data=json.dumps({"message": url_error}, ensure_ascii=False),
             event="error",
         )
         return
@@ -236,6 +268,14 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
 
     try:
         if not req.subtitle_text.strip():
+            # 仅在实际需要抓取字幕时才校验 URL（前端已传字幕时不发起任何服务端请求）。
+            url_error = _validate_video_url(req.url)
+            if url_error:
+                yield ServerSentEvent(
+                    data=json.dumps({"message": url_error}, ensure_ascii=False),
+                    event="error",
+                )
+                return
             loop = asyncio.get_running_loop()
             extractor = _get_extractor()
             # 加超时：与 summarize 一致，防止字幕提取卡死线程。

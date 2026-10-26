@@ -500,6 +500,10 @@ def export_cache_data(
                     v.get("last_access_at", ""),
                 ])
             content = buf.getvalue()
+            # Excel 在简体中文 Windows 上默认按 GBK 解析 CSV，中文表头/标题会乱码；
+            # 前置 UTF-8 BOM 让其正确识别为 UTF-8（标准 CSV 解析器会忽略该 BOM）。
+            if content:
+                content = "\ufeff" + content
             media_type = "text/csv"
             filename = f"video_cache_export_{int(time.time())}.csv"
         
