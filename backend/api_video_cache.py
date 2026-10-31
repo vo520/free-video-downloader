@@ -143,11 +143,13 @@ def get_video(url: str):
         video = video_cache_db.get_video(url)
         if not video:
             raise HTTPException(status_code=404, detail="视频缓存不存在")
-        
+
         # 走 manager 的命中处理：累加命中数并在达到阈值(100)时自动标记热门，
         # 否则 is_hot 只能靠手动接口设置、热门统计恒为 0。
+        # 必须在读取之前自增：否则返回的是自增前的快照，hit_count / is_hot 恒为旧值。
         video_cache_manager.process_cache_hit(url)
-        
+        video = video_cache_db.get_video(url) or video
+
         return JSONResponse(content={
             "success": True,
             "data": video

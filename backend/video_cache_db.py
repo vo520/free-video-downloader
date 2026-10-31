@@ -329,6 +329,27 @@ class VideoCacheDB:
                 (_now(), _normalize_url(url)),
             )
 
+    def increment_hit_and_mark_hot(self, url: str, threshold: int) -> bool:
+        """原子地自增命中数，并在达到阈值时标记为热门。
+
+        用单条 UPDATE 完成「自增 + 条件标记」，避免原先 read-then-write 的三步
+        （increment → 重新 SELECT 判断阈值 → mark）产生的竞态：并发命中时
+        可能重复判定或漏判热门。返回是否标记了热门。
+        """
+        key = _normalize_url(url)
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE video_cache SET cache_hit_count = cache_hit_count + 1, "
+                "last_access_at=? WHERE video_url=?",
+                (_now(), key),
+            )
+            cur = conn.execute(
+                "UPDATE video_cache SET is_hot=1, updated_at=? "
+                "WHERE video_url=? AND is_hot=0 AND cache_hit_count >= ?",
+                (_now(), key, int(threshold)),
+            )
+        return cur.rowcount > 0
+
     def update_cache_status(self, url: str, status: str, expires_at: str | None = None) -> bool:
         if expires_at:
             # 统一转成带 UTC 时区的 isoformat，保证与 _now() 按字符串比较时语义正确
@@ -342,10 +363,20 @@ class VideoCacheDB:
                     (status, expires_at, _now(), key),
                 )
             else:
-                cur = conn.execute(
-                    "UPDATE video_cache SET cache_status=?, updated_at=? WHERE video_url=?",
-                    (status, _now(), key),
-                )
+                # 不传 expires_at 时：置为 active 必须同时刷新过期时间，
+                # 否则会保留旧的（可能已过期）到期时间，缓存刚被激活就被
+                # cleanup_expired 判定过期删除。其它状态沿用原到期时间。
+                if status == "active":
+                    cur = conn.execute(
+                        "UPDATE video_cache SET cache_status=?, cache_expires_at=?, updated_at=? "
+                        "WHERE video_url=?",
+                        (status, _now(), _now(), key),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE video_cache SET cache_status=?, updated_at=? WHERE video_url=?",
+                        (status, _now(), key),
+                    )
         return cur.rowcount > 0
 
     def delete_video(self, url: str) -> bool:

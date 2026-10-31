@@ -70,8 +70,12 @@ def validate_password(password: str) -> str | None:
     return None
 
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    """必须登录"""
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """必须登录
+
+    同步函数（FastAPI 会放入线程池执行）：内部 get_user_by_id 是同步 SQLite 查询，
+    若写成 async def 会在事件循环里执行同步 IO，阻塞其它请求。
+    """
     if not credentials:
         raise HTTPException(status_code=401, detail="请先登录")
     payload = decode_token(credentials.credentials)
@@ -82,8 +86,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user
 
 
-async def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict | None:
-    """可选登录：已登录返回用户信息，未登录返回 None"""
+def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict | None:
+    """可选登录：已登录返回用户信息，未登录返回 None
+
+    同 get_current_user：同步函数，避免同步 SQLite 查询阻塞事件循环。
+    """
     if not credentials:
         return None
     try:

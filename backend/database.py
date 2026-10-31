@@ -407,9 +407,12 @@ def create_order(user_id: int, order_no: str, amount: int, currency: str = "cny"
 
 def update_order_stripe_session(order_no: str, session_id: str):
     with get_db() as conn:
+        # 与其它订单写入统一用带 UTC 时区的 ISO 格式：
+        # datetime('now') 产出 "YYYY-MM-DD HH:MM:SS"（无时区、空格分隔），
+        # 与 ISO 格式混在同一列时按字符串比较/排序会得到错误结果。
         conn.execute(
-            "UPDATE orders SET stripe_session_id = ?, updated_at = datetime('now') WHERE order_no = ?",
-            (session_id, order_no),
+            "UPDATE orders SET stripe_session_id = ?, updated_at = ? WHERE order_no = ?",
+            (session_id, datetime.now(timezone.utc).isoformat(), order_no),
         )
 
 

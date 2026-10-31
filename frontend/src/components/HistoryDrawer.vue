@@ -252,6 +252,9 @@ let actionErrorTimer = null
 const PAGE_SIZE = 100
 const total = ref(0)
 const loadingMore = ref(false)
+// 已处理过的「宿主透传被删 id」集合：宿主是累积透传同一个数组，
+// 记录已处理项才能只对新增 id 扣减 total，避免重复扣减。
+const removedIdSet = new Set()
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -459,13 +462,18 @@ watch(open, (v) => {
 })
 
 // 宿主（落地页最近解析 / 顶栏）删除历史 → 同步移出抽屉列表。
-// 按 id 集合过滤（幂等，宿主累积透传也不会重复生效），并按实际移除条数修正 total。
+// 按 id 集合过滤（幂等，宿主累积透传也不会重复生效）。
+// total 按「本次新增的被删 id 数」递减，而不是按已加载条目中被移除的数量：
+// 被删的记录可能不在当前已加载页里（如历史较多时删的是第 2 页的记录），
+// 只按已加载条目扣减会让 total 偏大、与服务端真实总数持续偏差。
 watch(() => props.removedIds, (ids) => {
   if (!ids || ids.length === 0) return
   const set = new Set(ids)
-  const before = items.value.length
+  // 只统计本次新增的 id（宿主是累积透传，重复的 id 不能重复扣 total）
+  const fresh = ids.filter((id) => !removedIdSet.value.has(id))
+  fresh.forEach((id) => removedIdSet.value.add(id))
   items.value = items.value.filter((x) => !set.has(x.id))
-  total.value = Math.max(0, total.value - (before - items.value.length))
+  total.value = Math.max(0, total.value - fresh.length)
 })
 
 // 宿主清空历史成功 → 同步清空抽屉列表（含分页总数与筛选态）。
@@ -475,6 +483,7 @@ watch(() => props.clearSeq, (v, prev) => {
   total.value = 0
   search.value = ''
   expandedId.value = null
+  removedIdSet.clear()
 })
 
 // 卸载时清理未触发的 timer，避免组件已销毁 timer 才触发 ref 操作报错

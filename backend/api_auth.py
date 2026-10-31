@@ -77,7 +77,7 @@ def _build_user_response(user: dict) -> dict:
 
 
 @router.post("/register")
-async def register(req: RegisterRequest):
+def register(req: RegisterRequest):
     # 先归一化再校验：避免带首尾空格的合法邮箱被拒；小写避免 User@x.com 与 user@x.com 重复注册。
     email = req.email.strip().lower()
     if not validate_email(email):
@@ -114,7 +114,7 @@ async def register(req: RegisterRequest):
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+def login(req: LoginRequest):
     # 与注册一致归一化为小写，避免 Foo@x / foo@x 被视为两个账号导致无法登录
     email = req.email.strip().lower()
     user = get_user_by_email(email)

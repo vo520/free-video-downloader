@@ -78,12 +78,20 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
           (max, f) => Math.max(max, (f && (f.filesize || f.filesize_approx)) || 0),
           0
         )
+        // 分辨率/编码取自最高质量的可用格式：后端 video_cache 有 width/height/fps/codec
+        // 列，不传则恒为 0/NULL，后台缓存列表拿不到画质信息。
+        const bestFormat = formats.reduce(
+          (best, f) =>
+            f && (!best || (f.height || 0) > (best.height || 0)) ? f : best,
+          null
+        )
         saveVideoCache({
           url,
           video_info: {
             platform: res.data.platform,
             video_id: res.data.id,
             title: res.data.title,
+            description: res.data.description,
             uploader: res.data.uploader,
             thumbnail: res.data.thumbnail,
             direct_url: mediaUrl,
@@ -95,6 +103,10 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
             file_size: fileSize || null,
             quality: playable && playable.height ? `${playable.height}p` : '',
             format: playable ? playable.format_id : '',
+            width: (bestFormat && bestFormat.width) || 0,
+            height: (bestFormat && bestFormat.height) || 0,
+            fps: (bestFormat && bestFormat.fps) || 0,
+            codec: (bestFormat && (bestFormat.vcodec || bestFormat.codec)) || null,
           },
           success: true,
         }).catch(() => {})

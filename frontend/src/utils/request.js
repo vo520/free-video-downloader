@@ -37,15 +37,17 @@ const ERROR_MESSAGES = {
 // 语义：promise pending 中 → 并发请求复用同一次初始化（避免重复创建 demo 用户）；
 // promise 已 settle 且 token 仍为空（登出 / 初始化失败场景）→ 下一次调用重新触发。
 let _defaultUserPromise = null
-let _defaultUserSettled = true
+let _defaultUserPending = false
 async function ensureDefaultUserLazy() {
   if (getToken()) return // 已有 token，跳过
-  if (!_defaultUserPromise || _defaultUserSettled) {
-    _defaultUserSettled = false
+  // 用 pending 标志（而非 promise 是否 settle）判定并发：
+  // 标志在发起请求前同步置位，杜绝两个并发调用各自发起一次 demo 登录。
+  if (!_defaultUserPending) {
+    _defaultUserPending = true
     _defaultUserPromise = ensureDefaultUser()
       .catch(() => false)
       .finally(() => {
-        _defaultUserSettled = true
+        _defaultUserPending = false
       })
   }
   return _defaultUserPromise

@@ -172,25 +172,26 @@ class VideoCacheManager:
         except Exception:
             return False
     
-    def process_cache_hit(self, url: str):
+    def process_cache_hit(self, url: str) -> bool:
         """
         处理缓存命中
-        增加命中计数，可能标记为热门
-        
+        增加命中计数，达到阈值时标记为热门
+
         Args:
             url: 视频URL
+
+        Returns:
+            本次是否把该缓存标记成了热门
         """
         if not self.db:
-            return
-        
+            return False
+
         try:
-            self.db.increment_hit_count(url)
-            
-            if self.should_mark_as_hot(url):
-                self.db.mark_as_hot(url)
-        
+            # 原子完成「自增 + 阈值判定 + 标记」，避免 read-then-write 竞态
+            return self.db.increment_hit_and_mark_hot(url, self._hot_cache_threshold)
         except Exception as e:
             print(f"处理缓存命中失败: {e}")
+            return False
     
     def auto_cleanup_expired(self, force: bool = False) -> int:
         """

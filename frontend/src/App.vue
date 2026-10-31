@@ -304,7 +304,11 @@ async function onRemoveHistory(urlOrId) {
     (h) => (h.id != null && String(h.id) === String(urlOrId)) || h.url === urlOrId
   )
   const removedId = await removeHistory(urlOrId)
-  if (removedId != null) drawerRemovedIds.value = drawerRemovedIds.value.concat(removedId)
+  if (removedId != null) {
+    // 只保留最近一批：抽屉侧按 id 集合过滤，已被移除的条目不再需要重复通知，
+    // 否则长时间使用会让这个数组无限增长。
+    drawerRemovedIds.value = drawerRemovedIds.value.concat(removedId).slice(-100)
+  }
   // 与抽屉删除保持一致：删掉当前正在看的视频记录后，视频面板与 AI 总结面板
   // 不应继续显示已删内容（原仅抽屉路径调用了 handleHistoryDeleted）。
   // 仅在服务端删除成功时执行，避免接口失败却把当前视频清空。

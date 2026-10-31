@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
@@ -180,7 +181,10 @@ async def stripe_webhook(request: Request):
 
         if session.get("payment_status") == "paid":
             payment_intent_id = session.get("payment_intent", "")
-            result = _complete_order_with_fallback(session, payment_intent_id)
+            # 订单完成包含同步 SQLite 写入，放线程池执行，避免阻塞事件循环
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, _complete_order_with_fallback, session, payment_intent_id
+            )
             if result:
                 print(f"[Payment] Order {result['order_no']} completed successfully")
             else:
@@ -189,13 +193,17 @@ async def stripe_webhook(request: Request):
     elif event["type"] == "checkout.session.async_payment_succeeded":
         session = event["data"]["object"]
         payment_intent_id = session.get("payment_intent", "")
-        _complete_order_with_fallback(session, payment_intent_id)
+        await asyncio.get_running_loop().run_in_executor(
+            None, _complete_order_with_fallback, session, payment_intent_id
+        )
 
     return JSONResponse(status_code=200, content={"received": True})
 
 
 @router.get("/orders")
-async def list_orders(user: dict = Depends(get_current_user)):
+def list_orders(user: dict = Depends(get_current_user)):
+    # 同步函数（FastAPI 放入线程池）：内部 get_user_orders 是同步 SQLite 查询。
+    # 写成 async def 会在事件循环里执行同步 IO，阻塞其它请求。
     orders = get_user_orders(user["id"])
     return {
         "success": True,
