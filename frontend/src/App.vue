@@ -298,8 +298,19 @@ const drawerRemovedIds = ref([])   // 待抽屉移除的 id（累积；抽屉侧
 const drawerClearSeq = ref(0)      // 递增序号：抽屉侧据此清空列表
 
 async function onRemoveHistory(urlOrId) {
+  // 先按 id / url 找到条目（删除后列表里就没了），用于联动清理当前视频。
+  // 删除入口有两条：落地页传 item.url、顶栏传 item.id，故两种都要匹配。
+  const target = history.value.find(
+    (h) => (h.id != null && String(h.id) === String(urlOrId)) || h.url === urlOrId
+  )
   const removedId = await removeHistory(urlOrId)
   if (removedId != null) drawerRemovedIds.value = drawerRemovedIds.value.concat(removedId)
+  // 与抽屉删除保持一致：删掉当前正在看的视频记录后，视频面板与 AI 总结面板
+  // 不应继续显示已删内容（原仅抽屉路径调用了 handleHistoryDeleted）。
+  // 仅在服务端删除成功时执行，避免接口失败却把当前视频清空。
+  if (removedId != null && target) {
+    handleHistoryDeleted({ type: 'parse', video_url: target.url })
+  }
 }
 
 async function onClearHistory() {

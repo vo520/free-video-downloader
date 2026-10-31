@@ -134,7 +134,15 @@ export function attachAuthInterceptor(instance, includeRequestInterceptor = true
   instance.interceptors.response.use(
     (response) => response,
     (error) => {
-      if (error.response?.status === 401 && !error.config?.__noAuthRecover) {
+      // 401 判定必须与 request.js 的 handleResponseError 保持一致：
+      // __noAuthRecover（best-effort 写入）与 __silent（后台静默轮询）都不应触发全局登出。
+      // 否则后台管理面板的静默轮询 401 会把用户静默登出（清 token + 清本地历史）却无任何提示，
+      // 而同一 instance 上另一处拦截器却因 __silent 跳过了 401 处理，两边语义相互矛盾。
+      if (
+        error.response?.status === 401 &&
+        !error.config?.__noAuthRecover &&
+        !error.config?.__silent
+      ) {
         logout()
         // 通知 Vue 层同步清 currentUser / 历史（window.__appForceLogout 由 App.vue 注入）
         if (typeof window !== 'undefined' && typeof window.__appForceLogout === 'function') {

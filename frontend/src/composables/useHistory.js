@@ -122,7 +122,14 @@ export function useHistory({ showToast, isAuthed } = {}) {
    */
   async function removeHistory(urlOrId) {
     if (hasAuthedUser()) {
-      const item = history.value.find(h => (h.id != null ? String(h.id) === String(urlOrId) : h.url === urlOrId))
+      // 同时按 id 与 url 匹配：落地页删除传的是 item.url，顶栏删除传的是 item.id，
+      // 原写法把三元判断写成了 h.id != null（有 id 的条目一律只比 id），
+      // 导致落地页删除永远匹配不到记录 → 只做本地过滤、服务端记录不删，刷新后条目复活。
+      const item = history.value.find(
+        (h) =>
+          (h.id != null && String(h.id) === String(urlOrId)) ||
+          (h.url != null && h.url === urlOrId)
+      )
       if (!item || item.id == null) {
         history.value = history.value.filter(h => h.url !== urlOrId)
         return null

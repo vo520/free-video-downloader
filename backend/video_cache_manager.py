@@ -124,12 +124,19 @@ class VideoCacheManager:
                 ):
                     continue
                 
-                if matched_rule is None or rule.get('priority', 0) > matched_rule.get('priority', 0):
+                if matched_rule is None or (rule.get('priority') or 0) > (matched_rule.get('priority') or 0):
                     matched_rule = rule
-            
+
             if matched_rule:
-                return matched_rule.get('ttl_seconds', 86400)
-            
+                # ttl_seconds 可能为 NULL（列可空），或被配置成 <=0 的非法值：
+                # 前者会让调用方拿到 None，后者会写出「已过期」的时间点导致缓存刚存就被清理。
+                ttl = matched_rule.get('ttl_seconds')
+                try:
+                    ttl = int(ttl)
+                except (TypeError, ValueError):
+                    ttl = 0
+                return ttl if ttl > 0 else 86400
+
             return 86400
         
         except Exception as e:
@@ -242,7 +249,25 @@ class VideoCacheManager:
                     "valid": False,
                     "reason": "缓存已过期"
                 }
-            
+
+            # 过期判定必须以 cache_expires_at 为准：cleanup_expired 是按到期时间直接
+            # DELETE，从不把状态写成 'expired'，且 save_video 会把状态重置为 'active'。
+            # 只看 cache_status 会让「已过期但尚未被清理」的缓存返回 valid=True。
+            expires_at = video.get('cache_expires_at')
+            if expires_at:
+                try:
+                    exp = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00'))
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp <= datetime.now(timezone.utc):
+                        return {
+                            "valid": False,
+                            "reason": "缓存已过期"
+                        }
+                except (ValueError, TypeError):
+                    # 到期时间格式异常时按不拦截处理，避免误判有效缓存为无效
+                    pass
+
             if video.get('parse_success') == 0:
                 return {
                     "valid": False,
@@ -322,11 +347,18 @@ class VideoCacheManager:
                     video.get('quality', ''),
                     video.get('duration', 0)
                 )
-            
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=new_ttl)
-            self.db.update_cache_status(url, 'active', expires_at.isoformat())
-            
-            return True
+
+            # TTL 非正数会算出「已经过期」的时间点，缓存刚续期就被 cleanup_expired 清掉
+            try:
+                ttl = int(new_ttl)
+            except (TypeError, ValueError):
+                ttl = 0
+            if ttl <= 0:
+                ttl = 86400
+
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+            # update_cache_status 返回是否真的改到了记录；记录不存在时应返回 False 而非 True
+            return self.db.update_cache_status(url, 'active', expires_at.isoformat())
         
         except Exception as e:
             print(f"刷新缓存失败: {e}")
@@ -390,8 +422,17 @@ class VideoCacheManager:
             }
         
         except Exception as e:
+            # 吞异常后返回空字典会让接口返回 {"success": true, "data": {}}，
+            # 调用方无法区分「无数据」与「出错」。改为显式标记 error。
             print(f"生成生命周期报告失败: {e}")
-            return {}
+            return {
+                "error": "生成生命周期报告失败",
+                "overview": {},
+                "by_age": {},
+                "rules_summary": {"total": 0, "active": 0},
+                "recommendations": [],
+                "timestamp": datetime.now().isoformat(),
+            }
     
     def _generate_recommendations(self, stats: Dict, by_age: Dict) -> List[str]:
         """生成优化建议"""

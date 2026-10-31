@@ -10,9 +10,22 @@
  * 用于组件销毁 / 重新触发总结时立即中断旧请求，避免旧回调污染新状态。
  */
 
-import { getToken } from './auth'
+import { getToken, logout } from './auth'
 import { showFetchError } from '../utils/request'
 import { getApiError } from '../utils/error'
+
+/**
+ * SSE 走原生 fetch，不经过 axios 拦截器，401 时必须自行处理登出，
+ * 否则界面仍显示已登录、token 已失效，与 axios 路径行为相反
+ * （后续请求会被 ensureDefaultUserLazy 换成 demo 账号 token）。
+ */
+function handleUnauthorized(response) {
+  if (response.status !== 401) return
+  logout()
+  if (typeof window !== 'undefined' && typeof window.__appForceLogout === 'function') {
+    window.__appForceLogout()
+  }
+}
 
 async function handleSSEStream(response, callbacks, signal) {
   const reader = response.body.getReader()
@@ -47,8 +60,17 @@ async function handleSSEStream(response, callbacks, signal) {
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+      // SSE 帧分隔符可能是 \r\n / \r / \n（sse_starlette 用 \r\n），
+      // 仅按 \n 切分会把事件名与数据尾部带上 \r，且空行分隔符变成 "\r"，
+      // 导致回调查不到（event="done\r"）且空行不触发 dispatch —— 整个流式回调全部失效。
+      // 末尾孤立的 \r 可能是 \r\n 的前半段，留在 buffer 等下一片再判，避免误切分。
+      let pending = ''
+      if (buffer.endsWith('\r')) {
+        pending = '\r'
+        buffer = buffer.slice(0, -1)
+      }
+      const lines = buffer.split(/\r\n|\r|\n/)
+      buffer = (lines.pop() || '') + pending
 
       for (const line of lines) {
         if (line === '') {
@@ -116,6 +138,7 @@ export async function summarizeVideo(url, language = 'zh', callbacks = {}, title
 
   if (!response.ok) {
     showFetchError(response)
+    handleUnauthorized(response)
     throw new Error(getApiError({ response: { status: response.status, data: null } }, '总结失败'))
   }
 
@@ -132,6 +155,7 @@ export async function chatWithVideo(url, question, subtitleText = '', callbacks 
 
   if (!response.ok) {
     showFetchError(response)
+    handleUnauthorized(response)
     throw new Error(getApiError({ response: { status: response.status, data: null } }, '问答失败'))
   }
 

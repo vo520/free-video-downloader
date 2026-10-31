@@ -57,6 +57,7 @@ def init_db():
                 stripe_session_id TEXT UNIQUE,
                 stripe_payment_intent_id TEXT,
                 paid_at TEXT,
+                fail_reason TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY (user_id) REFERENCES users(id)
@@ -121,6 +122,13 @@ def init_db():
         except Exception as e:
             logging.warning("history 去重迁移跳过: %s", e)
 
+        # 兼容老库：orders 表补 fail_reason 列（记录支付失败回滚的原因）。
+        # CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，需显式 ALTER。
+        try:
+            conn.execute("ALTER TABLE orders ADD COLUMN fail_reason TEXT")
+        except Exception:
+            pass
+
 
 FREE_DAILY_SUMMARY_LIMIT = 3
 
@@ -165,6 +173,25 @@ def _normalize_video_url(url):
         return urlunsplit(("https", netloc, p.path, p.query, ""))
     except Exception:
         return url
+
+
+def canonical_video_url(url):
+    """把用户输入的链接归一为「该视频的唯一标识形式」，作为跨表去重的唯一口径。
+
+    规则（与 _normalize_video_url 保持一致，并额外处理纯数字抖音 ID）：
+    - 纯数字的抖音视频 ID 补全为 https://www.douyin.com/video/{id}
+      （与 /api/parse 的处理一致，否则同一视频在 history 与 video_cache 两表键值不同）
+    - 小写 host、强制 https、去除 www. 前缀与 fragment，保留 path/query
+
+    history 与 video_cache 两张表都必须用本函数归一，否则同一视频在两表对不上，
+    缓存去重键与历史去重键也会错位。失败时原样返回。
+    """
+    if not url or not isinstance(url, str):
+        return url
+    raw = url.strip()
+    if raw.isdigit():
+        raw = f"https://www.douyin.com/video/{raw}"
+    return _normalize_video_url(raw)
 
 
 def add_history(user_id, htype, video_url='', title='', platform='', thumbnail='', extra=None, snapshot=None):
@@ -392,12 +419,13 @@ def fail_order(order_no: str, reason: str = "") -> bool:
     用于 create-checkout 创建 Stripe 会话失败时回滚：否则会残留一条永远不会有
     webhook 回调的孤儿 pending 订单（用户订单列表里出现无法支付也无法关闭的记录）。
     仅翻转 pending，避免覆盖已支付订单（极端并发下 webhook 先到）。
+    reason 写入 fail_reason 列，便于排查孤儿订单的失败原因。
     """
     with get_db() as conn:
         cur = conn.execute(
-            "UPDATE orders SET status = 'failed', updated_at = ? "
+            "UPDATE orders SET status = 'failed', fail_reason = ?, updated_at = ? "
             "WHERE order_no = ? AND status = 'pending'",
-            (datetime.now(timezone.utc).isoformat(), order_no),
+            ((reason or "")[:500], datetime.now(timezone.utc).isoformat(), order_no),
         )
         return cur.rowcount > 0
 
@@ -409,15 +437,58 @@ def complete_order(session_id: str, payment_intent_id: str) -> dict | None:
     已被并发/重复的 webhook 处理（或本就不是 pending），直接返回 None，避免重复
     续期导致 VIP 被翻倍延长。
     """
+    return _complete_order_by(
+        "stripe_session_id = ? AND status = 'pending'",
+        (session_id,),
+        session_id,
+        payment_intent_id,
+    )
+
+
+def complete_order_by_order_no(
+    order_no: str, session_id: str, payment_intent_id: str
+) -> dict | None:
+    """按订单号完成订单（complete_order 的 order_no 兜底路径）。
+
+    场景：create-checkout 写库失败导致 stripe_session_id 未绑定到订单，
+    webhook 按 session_id 匹配不到订单 → 用户已付款但 VIP 永不激活。
+    此处按唯一订单号定位订单，并顺带补写 stripe_session_id。
+    """
+    return _complete_order_by(
+        "order_no = ? AND status = 'pending'",
+        (order_no,),
+        session_id,
+        payment_intent_id,
+        extra_set="stripe_session_id = ?",
+        extra_params=(session_id,),
+    )
+
+
+def _complete_order_by(
+    where: str,
+    where_params: tuple,
+    session_id: str,
+    payment_intent_id: str,
+    extra_set: str = "",
+    extra_params: tuple = (),
+) -> dict | None:
+    """订单置为 paid 并为用户续期的公共实现。
+
+    where / where_params 决定如何定位待支付订单；extra_set 用于同时补写其他列。
+    """
     from dateutil.relativedelta import relativedelta
 
     with get_db() as conn:
         now = datetime.now(timezone.utc).isoformat()
+        sets = ["status = 'paid'", "stripe_payment_intent_id = ?", "paid_at = ?", "updated_at = ?"]
+        params = [payment_intent_id, now, now]
+        if extra_set:
+            sets.append(extra_set)
+            params.extend(extra_params)
         # 原子占位：仅把 pending 翻成 paid；并发下只有一个事务能命中（rowcount==1）。
         cur = conn.execute(
-            "UPDATE orders SET status = 'paid', stripe_payment_intent_id = ?, "
-            "paid_at = ?, updated_at = ? WHERE stripe_session_id = ? AND status = 'pending'",
-            (payment_intent_id, now, now, session_id),
+            f"UPDATE orders SET {', '.join(sets)} WHERE {where}",
+            (*params, *where_params),
         )
         if cur.rowcount == 0:
             return None  # 已被并发/重复 webhook 处理，或订单非 pending
@@ -427,6 +498,8 @@ def complete_order(session_id: str, payment_intent_id: str) -> dict | None:
             "SELECT * FROM orders WHERE stripe_session_id = ? AND status = 'paid'",
             (session_id,),
         ).fetchone()
+        if order is None:
+            return None
         user = conn.execute("SELECT * FROM users WHERE id = ?", (order["user_id"],)).fetchone()
 
         current_expire = None

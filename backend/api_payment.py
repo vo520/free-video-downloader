@@ -12,6 +12,7 @@ from database import (
     create_order,
     update_order_stripe_session,
     complete_order,
+    complete_order_by_order_no,
     fail_order,
     get_user_orders,
     get_user_by_id,
@@ -44,8 +45,20 @@ def _generate_order_no(user_id: int) -> str:
     return f"SA{ts}{user_id:04d}{short_uuid}"
 
 
+def _fail_order_quietly(order_no: str, reason: str) -> None:
+    """best-effort 回滚 pending 订单。
+
+    回滚自身失败不能掩盖原始异常（否则用户看到的是「回滚失败」而非真实原因），
+    故只记录不抛出；同时把失败原因落库，便于排查孤儿订单。
+    """
+    try:
+        fail_order(order_no, reason=reason)
+    except Exception as e:
+        print(f"[Payment] 回滚订单 {order_no} 失败: {e}")
+
+
 @router.post("/create-checkout")
-async def create_checkout_session(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
+def create_checkout_session(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
     secret_key = _get_config("STRIPE_SECRET_KEY")
     price_id = _get_config("STRIPE_PRICE_ID_MONTHLY")
     frontend_url = _get_config("FRONTEND_URL", "http://localhost:5173")
@@ -90,26 +103,54 @@ async def create_checkout_session(req: CreateCheckoutRequest, user: dict = Depen
                 "plan_type": req.plan_type,
             },
         )
-
-        update_order_stripe_session(order_no, session.id)
-
-        return {
-            "success": True,
-            "data": {
-                "checkout_url": session.url,
-                "order_no": order_no,
-                "session_id": session.id,
-            },
-        }
-
-    except stripe.StripeError as e:
+    except Exception as e:
         # 回滚刚落的 pending 订单：会话创建失败不会有 webhook 回调，
         # 不标记会在用户订单列表里残留无法支付也无法关闭的孤儿记录。
-        try:
-            fail_order(order_no, reason=str(e))
-        except Exception:
-            pass
-        raise HTTPException(status_code=400, detail=f"创建支付会话失败: {str(e)}")
+        # 捕获全部异常而非仅 StripeError：写库失败（sqlite3.Error）等同样会让订单悬空。
+        _fail_order_quietly(order_no, str(e))
+        if isinstance(e, stripe.StripeError):
+            raise HTTPException(status_code=400, detail=f"创建支付会话失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="创建支付会话失败，请稍后重试")
+
+    try:
+        update_order_stripe_session(order_no, session.id)
+    except Exception as e:
+        # Stripe 会话已创建但订单未绑定 session_id：webhook 按 session_id 匹配不到订单，
+        # 用户已付款也不会开通 VIP。此处先补写绑定（按 order_no 匹配，不依赖 session_id）。
+        _fail_order_quietly(order_no, str(e))
+        raise HTTPException(status_code=500, detail="创建支付会话失败，请稍后重试")
+
+    return {
+        "success": True,
+        "data": {
+            "checkout_url": session.url,
+            "order_no": order_no,
+            "session_id": session.id,
+        },
+    }
+
+
+def _complete_order_with_fallback(session: dict, payment_intent_id: str) -> dict | None:
+    """按 session_id 完成订单；若匹配不到（订单未绑定 session_id），
+    用 metadata.order_no 兜底查找并补绑后再完成。
+
+    背景：complete_order 按 stripe_session_id 匹配订单。若此前写库失败导致
+    stripe_session_id 为 NULL，webhook 永远匹配不到 → 用户已付款但订单停留在
+    pending、VIP 永不激活。此处用 order_no（create-checkout 时写进 metadata，
+    且订单号本身唯一）兜底，保证「付款即开通」。
+    """
+    result = complete_order(session["id"], payment_intent_id)
+    if result:
+        return result
+
+    order_no = (session.get("metadata") or {}).get("order_no")
+    if not order_no:
+        return None
+    try:
+        return complete_order_by_order_no(order_no, session["id"], payment_intent_id)
+    except Exception as e:
+        print(f"[Payment] 按 order_no {order_no} 完成订单失败: {e}")
+        return None
 
 
 @router.post("/webhook")
@@ -139,7 +180,7 @@ async def stripe_webhook(request: Request):
 
         if session.get("payment_status") == "paid":
             payment_intent_id = session.get("payment_intent", "")
-            result = complete_order(session["id"], payment_intent_id)
+            result = _complete_order_with_fallback(session, payment_intent_id)
             if result:
                 print(f"[Payment] Order {result['order_no']} completed successfully")
             else:
@@ -148,7 +189,7 @@ async def stripe_webhook(request: Request):
     elif event["type"] == "checkout.session.async_payment_succeeded":
         session = event["data"]["object"]
         payment_intent_id = session.get("payment_intent", "")
-        complete_order(session["id"], payment_intent_id)
+        _complete_order_with_fallback(session, payment_intent_id)
 
     return JSONResponse(status_code=200, content={"received": True})
 

@@ -31,6 +31,16 @@ except ImportError:
 
 # ===== 请求模型 =====
 
+def _internal_error(e: Exception) -> HTTPException:
+    """把内部异常转换成对外的 500 响应。
+
+    异常原文（str(e)）可能包含 SQL 语句、文件路径、表结构等内部细节，
+    直接回给客户端属于信息泄露。改为服务端记录完整堆栈、客户端只给通用提示。
+    """
+    print(f"[VideoCache] 接口内部错误: {e}")
+    return HTTPException(status_code=500, detail="服务器内部错误，请稍后重试")
+
+
 def _csv_safe(v):
     """防止 CSV 公式注入：以 = + - @ 或制表/回车开头的单元格前缀单引号，
     避免管理员在 Excel 打开导出文件时误执行恶意公式（数据外泄/钓鱼）。"""
@@ -120,7 +130,7 @@ def get_videos(
             "offset": offset
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.get("/videos/{url:path}")
@@ -145,7 +155,7 @@ def get_video(url: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.post("/videos")
@@ -191,7 +201,7 @@ def save_video(req: SaveVideoRequest):
             "message": "视频缓存保存成功" if success else "视频缓存保存失败"
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.put("/videos/status")
@@ -215,7 +225,7 @@ def update_cache_status(req: UpdateCacheStatusRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.delete("/videos/{url:path}")
@@ -237,7 +247,7 @@ def delete_video(url: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.put("/videos/{url:path}/hot")
@@ -257,7 +267,7 @@ def mark_video_hot(url: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ===== 统计信息API =====
@@ -276,7 +286,7 @@ def get_cache_stats():
             "data": stats
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.get("/validate")
@@ -294,7 +304,7 @@ def validate_cache(url: str = Query(..., description="待校验的视频 URL")):
             "data": video_cache_manager.validate_cache(url)
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.get("/lifecycle")
@@ -309,7 +319,7 @@ def get_lifecycle_report():
             "data": video_cache_manager.get_lifecycle_report()
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.post("/cleanup")
@@ -326,7 +336,7 @@ def cleanup_expired_cache():
             "message": f"已清理 {count} 条过期缓存"
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ===== 缓存规则API =====
@@ -345,7 +355,7 @@ def get_cache_rules():
             "data": rules
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.post("/rules")
@@ -363,7 +373,7 @@ def save_cache_rule(req: SaveCacheRuleRequest):
             "message": "缓存规则保存成功" if success else "缓存规则保存失败"
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.delete("/rules/{rule_name}")
@@ -385,7 +395,7 @@ def delete_cache_rule(rule_name: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ===== 解析日志API =====
@@ -405,7 +415,7 @@ def get_parse_logs(limit: int = Query(100, ge=1, le=500)):
             "total": len(logs)
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.post("/logs")
@@ -423,7 +433,7 @@ def save_parse_log(req: SaveParseLogRequest):
             "message": "解析日志保存成功" if success else "解析日志保存失败"
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ===== 实时监控API =====
@@ -458,7 +468,7 @@ def get_monitor_status():
             }
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @router.get("/monitor/health")
@@ -501,7 +511,7 @@ def get_system_health():
             }
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ===== 导出API =====
@@ -562,4 +572,4 @@ def export_cache_data(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)

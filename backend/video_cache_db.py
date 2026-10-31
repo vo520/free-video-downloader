@@ -44,11 +44,22 @@ def _to_utc_iso(value: str) -> str:
 
 
 def _normalize_url(url: str) -> str:
-    """URL 标准化：小写 scheme 与 netloc，其余保持不变（用于去重哈希）。"""
-    from urllib.parse import urlparse, urlunparse
+    """URL 归一化：与 history 表使用同一口径（database.canonical_video_url）。
 
-    p = urlparse(url or "")
-    return urlunparse((p.scheme.lower(), p.netloc.lower(), p.path, p.params, p.query, p.fragment))
+    原实现只小写 scheme/netloc，保留 www. 与 fragment，会导致同一视频在
+    video_cache 与 history 两表的键值不同（例如 http://www.x.com/v#f 与
+    https://x.com/v 被当成两条），缓存去重键与历史去重键错位。
+    这里统一复用 canonical_video_url：纯数字抖音 ID 也会补全为完整链接。
+    """
+    try:
+        from database import canonical_video_url
+    except ImportError:
+        # database 模块不可用时退回宽松归一化，避免整个缓存模块无法导入
+        from urllib.parse import urlparse, urlunparse
+
+        p = urlparse(url or "")
+        return urlunparse((p.scheme.lower(), p.netloc.lower(), p.path, p.params, p.query, p.fragment))
+    return canonical_video_url(url)
 
 
 def _url_hash(url: str) -> str:
@@ -67,10 +78,13 @@ class VideoCacheDB:
     # ---------- 底层连接 ----------
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.db_path)
+        # timeout=30：api_video_cache 的路由已改为同步 def（FastAPI 放进线程池），
+        # 并发写同一张表时若无 busy_timeout 会直接抛 "database is locked"。
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=30000")
         try:
             yield conn
             conn.commit()
@@ -177,6 +191,11 @@ class VideoCacheDB:
         url = (video_data.get("url") or "").strip()
         if not url:
             return False
+        # 归一化后再入库：video_url 列、url_hash 去重键与 history 表保持同一口径，
+        # 否则同一视频会以不同形态存成多条记录（唯一约束只对完全相同的字符串生效）。
+        url = _normalize_url(url)
+        if not url:
+            return False
 
         info = video_data.get("video_info") or {}
         meta = video_data.get("metadata") or {}
@@ -240,7 +259,7 @@ class VideoCacheDB:
     def get_video(self, url: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM video_cache WHERE video_url=?", (url,)
+                "SELECT * FROM video_cache WHERE video_url=?", (_normalize_url(url),)
             ).fetchone()
         return dict(row) if row else None
 
@@ -307,37 +326,38 @@ class VideoCacheDB:
             conn.execute(
                 "UPDATE video_cache SET cache_hit_count = cache_hit_count + 1, "
                 "last_access_at=? WHERE video_url=?",
-                (_now(), url),
+                (_now(), _normalize_url(url)),
             )
 
     def update_cache_status(self, url: str, status: str, expires_at: str | None = None) -> bool:
         if expires_at:
             # 统一转成带 UTC 时区的 isoformat，保证与 _now() 按字符串比较时语义正确
             expires_at = _to_utc_iso(expires_at)
+        key = _normalize_url(url)
         with self._conn() as conn:
             if expires_at:
                 cur = conn.execute(
                     "UPDATE video_cache SET cache_status=?, cache_expires_at=?, updated_at=? "
                     "WHERE video_url=?",
-                    (status, expires_at, _now(), url),
+                    (status, expires_at, _now(), key),
                 )
             else:
                 cur = conn.execute(
                     "UPDATE video_cache SET cache_status=?, updated_at=? WHERE video_url=?",
-                    (status, _now(), url),
+                    (status, _now(), key),
                 )
         return cur.rowcount > 0
 
     def delete_video(self, url: str) -> bool:
         with self._conn() as conn:
-            cur = conn.execute("DELETE FROM video_cache WHERE video_url=?", (url,))
+            cur = conn.execute("DELETE FROM video_cache WHERE video_url=?", (_normalize_url(url),))
         return cur.rowcount > 0
 
     def mark_as_hot(self, url: str) -> bool:
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE video_cache SET is_hot=1, updated_at=? WHERE video_url=?",
-                (_now(), url),
+                (_now(), _normalize_url(url)),
             )
         return cur.rowcount > 0
 
