@@ -566,17 +566,27 @@ class VideoCacheDB:
         return cur.rowcount > 0
 
     def get_stats(self) -> dict:
+        # 过期判定必须与 cleanup_expired 同口径：按 cache_expires_at 比时，不能只看
+        # cache_status='expired'。系统从不会把到期的行写成 'expired'（cleanup 直接 DELETE），
+        # 只看状态会让「已过期但尚未清理」的行恒被算作 active、过期数恒为 0，
+        # 进而使 monitor/health 的「过期缓存比例过高」判断成为永远不触发的死代码。
+        now = _now()
         with self._conn() as conn:
             row = conn.execute(
                 """
                 SELECT
                     COUNT(*) AS total_videos,
-                    COALESCE(SUM(CASE WHEN cache_status='active' THEN 1 ELSE 0 END), 0) AS active_cache,
-                    COALESCE(SUM(CASE WHEN cache_status='expired' THEN 1 ELSE 0 END), 0) AS expired_cache,
+                    COALESCE(SUM(CASE WHEN cache_status='active'
+                                       AND (cache_expires_at IS NULL OR cache_expires_at >= ?)
+                                 THEN 1 ELSE 0 END), 0) AS active_cache,
+                    COALESCE(SUM(CASE WHEN cache_status='expired'
+                                       OR (cache_expires_at IS NOT NULL AND cache_expires_at < ?)
+                                 THEN 1 ELSE 0 END), 0) AS expired_cache,
                     COALESCE(SUM(is_hot), 0) AS hot_cache,
                     COALESCE(SUM(cache_hit_count), 0) AS total_cache_hits
                 FROM video_cache
-                """
+                """,
+                (now, now),
             ).fetchone()
             platform_rows = conn.execute(
                 "SELECT COALESCE(platform, 'unknown') AS platform, COUNT(*) AS cnt "
