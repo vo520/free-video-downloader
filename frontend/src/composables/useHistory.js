@@ -10,13 +10,18 @@ const HISTORY_MAX = 20
  * 前端 URL 归一化：对齐后端 _normalize_video_url 的核心规则，保证未登录本地历史与
  * 服务端历史使用同一把「同一视频」的判定基准，避免 http/https/www/#fragment 等形态差异
  * 被识别为两条记录（曾导致「同一视频出现两条记录」的视觉重复）。
- * 仅覆盖 history 模块需要的轻量规则：去 fragment + 去 www. 前缀 + 协议+host+path 小写，
- * query 保持原样不做排序（避免改变语义）。
+ * 仅覆盖 history 模块需要的轻量规则：纯数字抖音 ID 补全 + 去 fragment + 去 www. 前缀
+ * + 协议+host+path 小写，query 保持原样不做排序（避免改变语义）。
  * 注意：这是 best-effort 客户端兜底，不替代后端权威 upsert。
  */
 function _normalizeUrl(url) {
   if (!url || typeof url !== 'string') return ''
   let u = url.trim()
+  // 纯数字抖音视频 ID 补全为完整链接：与后端 canonical_video_url 口径一致。
+  // 用户常直接粘贴一串数字 ID，服务端会把它补全为 https://www.douyin.com/video/{id}，
+  // 前端若不补全，本地历史里「123456」与「https://www.douyin.com/video/123456」
+  // 会被当成两条记录，与服务端去重结果不一致。
+  if (/^\d+$/.test(u)) u = `https://www.douyin.com/video/${u}`
   // 去 fragment（# 及之后），同一视频带不同推荐参数/章节不应重复入库
   const hashIdx = u.indexOf('#')
   if (hashIdx >= 0) u = u.slice(0, hashIdx)

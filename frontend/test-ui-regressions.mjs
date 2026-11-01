@@ -36,11 +36,15 @@ const HARNESS_JS = `import { createApp, h } from 'vue'
 import HeroSection from '../src/components/HeroSection.vue'
 import EmptyState from '../src/components/ui/EmptyState.vue'
 import { useToast } from '../src/composables/useToast.js'
+import { useDownloadManager } from '../src/composables/useDownloadManager.js'
+import { normalizeHistoryUrl } from '../src/composables/useHistory.js'
 
 const Root = {
   setup() {
     const { appToast, showToast } = useToast()
     window.__toast = { appToast, showToast }
+    window.__dm = useDownloadManager()
+    window.__normalizeHistoryUrl = normalizeHistoryUrl
     return {}
   },
   render() {
@@ -145,7 +149,64 @@ async function testToastMergeCount(page) {
   assert.equal(count, 2, `队列内重复消息的合并计数丢失（count=${count}，期望 2）`)
 }
 
-// ---------- 5. 源码契约：修复点不能被改回去 ----------
+// ---------- 5. 下载重试必须有状态守卫（防止同一任务并发启动两次） ----------
+async function testRetryStateGuard(page) {
+  const result = await page.evaluate(() => {
+    const { state, retry } = window.__dm
+    // 直接构造任务验证 retry 的状态守卫：只有 error / canceled 才允许重试
+    state.tasks.length = 0
+    const make = (id, status) => ({
+      id,
+      url: `https://noop.test/${id}`,
+      formatId: '',
+      title: id,
+      status,
+      progress: 50,
+      received: 1,
+      total: 2,
+      error: '',
+    })
+    const downloading = make('t-downloading', 'downloading')
+    const done = make('t-done', 'done')
+    state.tasks.push(downloading, done)
+    retry('t-downloading')
+    retry('t-done')
+    return {
+      downloading: downloading.status,
+      done: done.status,
+      count: state.tasks.length,
+    }
+  })
+  assert.equal(
+    result.downloading,
+    'downloading',
+    '重试把进行中的任务改回 queued，会让同一任务并发启动两个下载'
+  )
+  assert.equal(result.done, 'done', '已完成任务不应被重试重新下载')
+  assert.equal(result.count, 2, '重试不得新增任务')
+}
+
+// ---------- 6. 前端 URL 归一化必须与后端一致（裸数字抖音 ID 补全） ----------
+async function testNormalizeHistoryUrl(page) {
+  const result = await page.evaluate(() => {
+    const fn = window.__normalizeHistoryUrl
+    return {
+      bare: fn('7001234'),
+      padded: fn('  7001234  '),
+      full: fn('https://www.douyin.com/video/7001234'),
+      messy: fn('http://www.Douyin.com/video/7001234#comment'),
+      empty: fn(''),
+    }
+  })
+  const expected = 'https://douyin.com/video/7001234'
+  assert.equal(result.bare, expected, '裸数字抖音 ID 未补全为完整链接')
+  assert.equal(result.padded, expected, '带首尾空格的裸数字 ID 未正确归一化')
+  assert.equal(result.full, expected, '完整抖音链接归一化结果不一致')
+  assert.equal(result.messy, expected, 'http/www/大小写/fragment 未归一化到同一形态')
+  assert.equal(result.empty, '', '空值应返回空字符串')
+}
+
+// ---------- 7. 源码契约：修复点不能被改回去 ----------
 function testSourceContracts() {
   const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8')
   // 注释里会提到 window.open(..., 'noopener') 作为对比说明，先剥掉注释再校验代码
@@ -213,6 +274,8 @@ try {
   await testPasteHint(page)
   await testWindowOpenSemantics(page)
   await testToastMergeCount(page)
+  await testRetryStateGuard(page)
+  await testNormalizeHistoryUrl(page)
   testSourceContracts()
 
   assert.deepEqual(errors, [], `页面存在运行时错误：${errors.join(' / ')}`)

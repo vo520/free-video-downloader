@@ -240,6 +240,10 @@ function cancel(id) {
 function retry(id) {
   const t = state.tasks.find((x) => x.id === id)
   if (!t) return
+  // 只允许失败/已取消的任务重试：重复点击时第一次已经把状态改成 queued 并由
+  // pump() 启动下载，第二次点击若再置 queued 会让同一任务并发跑两个 fetch，
+  // 且 controllers.set 覆盖旧 controller 后旧请求无法再取消，进度互相覆盖。
+  if (t.status !== 'error' && t.status !== 'canceled') return
   t.formatId = t.formatId || DEFAULT_FORMAT_ID
   t.status = 'queued'
   t.progress = 0
