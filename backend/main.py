@@ -1,5 +1,6 @@
 import os
 import asyncio
+import functools
 import ipaddress
 import socket
 import time
@@ -350,14 +351,20 @@ async def parse_video(req: ParseRequest, user: dict | None = Depends(get_optiona
         # 已登录用户记录解析历史（best-effort；add_history 内部已吞异常并 warning，失败不影响主返回）。
         # snapshot=result 存完整 videoData（含 formats/duration/uploader 等），使历史回看不必重跑 yt-dlp。
         # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        # 同步 SQLite 写必须丢线程池：写在 async 路由里会阻塞事件循环，期间所有请求无响应。
         if user and not is_shared_demo_user(user):
-            add_history(
-                user["id"], "parse",
-                video_url=url,
-                title=result.get("title"),
-                platform=result.get("platform"),
-                thumbnail=result.get("thumbnail"),
-                snapshot=result,
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    add_history,
+                    user["id"],
+                    "parse",
+                    video_url=url,
+                    title=result.get("title"),
+                    platform=result.get("platform"),
+                    thumbnail=result.get("thumbnail"),
+                    snapshot=result,
+                ),
             )
         # 记录成功日志（SQLite 写入丢到线程池，避免阻塞事件循环）
         await loop.run_in_executor(
@@ -433,13 +440,19 @@ async def download_video(req: DownloadRequest, user: dict | None = Depends(get_o
 
         # 已登录用户记录下载历史（best-effort；add_history 内部已吞异常并 warning，失败不影响主返回）
         # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        # 同步 SQLite 写必须丢线程池：写在 async 路由里会阻塞事件循环。
         if user and not is_shared_demo_user(user):
-            add_history(
-                user["id"], "download",
-                video_url=url,
-                title=req.title or None,
-                platform=req.platform or None,
-                extra={"format_id": req.format_id},
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    add_history,
+                    user["id"],
+                    "download",
+                    video_url=url,
+                    title=req.title or None,
+                    platform=req.platform or None,
+                    extra={"format_id": req.format_id},
+                ),
             )
         return FileResponse(
             path=filepath,

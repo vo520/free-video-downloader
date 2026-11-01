@@ -16,10 +16,15 @@ def get_db_path():
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(get_db_path())
+    # timeout=30 + busy_timeout=30000：与 video_cache_db.py 保持一致。
+    # 本库的写操作（历史 upsert、总结配额扣减、订单状态翻转）会在 FastAPI
+    # 线程池里并发执行，WAL 模式下写-写仍互斥；没有 busy_timeout 时并发写会
+    # 立刻抛 "database is locked"（历史丢失 / 配额扣减 500），有了它则等待至多 30s。
+    conn = sqlite3.connect(get_db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     try:
         yield conn
         conn.commit()
@@ -84,7 +89,9 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_history_user_id ON history(user_id);
             CREATE INDEX IF NOT EXISTS idx_history_user_type ON history(user_id, type);
-            CREATE INDEX IF NOT EXISTS idx_history_user_type_url ON history(user_id, type, video_url);
+            -- 去重索引不在这里建：下方迁移会用 UNIQUE 版本 uniq_history_user_type_url。
+            -- 若此处再建一个同列的非唯一索引，迁移会在同一次启动里把它 DROP 掉，
+            -- 等于每次启动都白白对整表做一次索引重建。
         """)
         # 历史去重加固迁移（幂等，init_db 每次启动安全重跑）：
         # ① 按「归一化 URL」分组，每组保留 id 最大（最新）一条，其余删除（先删后改，
@@ -101,7 +108,7 @@ def init_db():
             rows = conn.execute("SELECT id, user_id, type, video_url FROM history").fetchall()
             groups = {}
             for r in rows:
-                key = (r["user_id"], r["type"], _normalize_video_url(r["video_url"]))
+                key = (r["user_id"], r["type"], canonical_video_url(r["video_url"]))
                 groups.setdefault(key, []).append(r["id"])
             delete_ids = []
             for ids in groups.values():
@@ -111,7 +118,7 @@ def init_db():
                 placeholders = ",".join("?" * len(delete_ids))
                 conn.execute(f"DELETE FROM history WHERE id IN ({placeholders})", delete_ids)
             for r in rows:
-                norm = _normalize_video_url(r["video_url"])
+                norm = canonical_video_url(r["video_url"])
                 if norm != r["video_url"]:
                     conn.execute("UPDATE history SET video_url=? WHERE id=?", (norm, r["id"]))
             conn.execute("DROP INDEX IF EXISTS idx_history_user_type_url")
@@ -209,7 +216,10 @@ def add_history(user_id, htype, video_url='', title='', platform='', thumbnail='
     """
     if not user_id:
         return None
-    video_url = _normalize_video_url(video_url)
+    # 用 canonical_video_url（而非 _normalize_video_url）：裸数字抖音 ID 也要补全为
+    # 完整链接，否则同一视频在 history 与 video_cache 两表的去重键对不上
+    # （video_cache 用的是 canonical_video_url 口径）。
+    video_url = canonical_video_url(video_url)
     if not video_url:
         return None
     try:
@@ -330,6 +340,26 @@ def clear_history(user_id):
         return cur.rowcount
 
 
+def _is_vip_active(user) -> bool:
+    """判断用户行当前是否处于有效 VIP 状态（is_vip 且未过期）。
+
+    check_summary_quota（只读）与 check_and_increment_summary（消费）必须用同一口径，
+    否则会出现「配额接口说不是 VIP、扣减接口说是 VIP」的不一致。
+    """
+    if not user["is_vip"] or not user["vip_expire_at"]:
+        return False
+    try:
+        expire_str = user["vip_expire_at"]
+        # 缺时区则按 UTC 补全：naive 值与带时区的 now 比较会抛 TypeError
+        if "+" in expire_str or "Z" in expire_str:
+            expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
+        else:
+            expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
+        return expire > datetime.now(timezone.utc)
+    except (ValueError, TypeError):
+        return False
+
+
 def check_summary_quota(user_id: int) -> tuple[bool, int]:
     """只读检查用户是否还有免费 AI 总结额度（不自增计数）。
 
@@ -343,17 +373,8 @@ def check_summary_quota(user_id: int) -> tuple[bool, int]:
         if not user:
             return False, 0
 
-        if user["is_vip"] and user["vip_expire_at"]:
-            try:
-                expire_str = user["vip_expire_at"]
-                if "+" in expire_str or "Z" in expire_str:
-                    expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
-                else:
-                    expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
-                if expire > datetime.now(timezone.utc):
-                    return True, -1  # -1 means unlimited
-            except ValueError:
-                pass
+        if _is_vip_active(user):
+            return True, -1  # -1 means unlimited
 
         if user["last_summary_date"] != today:
             return True, FREE_DAILY_SUMMARY_LIMIT
@@ -370,8 +391,12 @@ def check_and_increment_summary(user_id: int) -> tuple[bool, int]:
     检查用户是否可以使用 AI 总结，并自增计数。
     返回 (allowed, remaining_count)。
 
-    并发安全：跨天重置与 +1 均通过带条件的 UPDATE（依赖 rowcount 判断），
+    并发安全：额度扣减由**单条带条件的 UPDATE** 完成，依赖 rowcount 判定是否放行，
     避免「先 SELECT 再 UPDATE」在并发下被突破日额度的问题。
+
+    跨天重置也放进同一条 UPDATE 的 CASE 表达式里：原先跨天分支无条件
+    `SET daily_summary_count = 1`，同一天首批并发请求会互相覆盖计数
+    （每个都把自己算成当天第 1 次），实际放行次数会超过每日上限。
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     with get_db() as conn:
@@ -379,33 +404,21 @@ def check_and_increment_summary(user_id: int) -> tuple[bool, int]:
         if not user:
             return False, 0
 
-        if user["is_vip"] and user["vip_expire_at"]:
-            try:
-                expire_str = user["vip_expire_at"]
-                if "+" in expire_str or "Z" in expire_str:
-                    expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
-                else:
-                    expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
-                if expire > datetime.now(timezone.utc):
-                    return True, -1  # -1 means unlimited
-            except ValueError:
-                pass
+        if _is_vip_active(user):
+            return True, -1  # -1 means unlimited
 
-        # 跨天：直接清零并记为第 1 次。无条件更新即可（新用户 last_summary_date 为 NULL，
-        # 带 `!= today` 的条件会因 NULL 比较失败而不生效）；并发两请求都置 1 不会超发。
-        # 真正需要原子防超发的是下方同天 +1 分支（用 WHERE count < limit + rowcount 判定）。
-        if user["last_summary_date"] != today:
-            conn.execute(
-                "UPDATE users SET daily_summary_count = 1, last_summary_date = ? WHERE id = ?",
-                (today, user_id),
-            )
-            return True, FREE_DAILY_SUMMARY_LIMIT - 1
-
-        # 同天内：仅当尚未达上限时才 +1，依赖 rowcount 判定是否成功（并发防超发）
+        # 单条原子 UPDATE 同时覆盖「跨天重置」与「同日 +1」两种情况：
+        #   CASE  —— 同日则 +1，跨天/首次使用则重置为 1
+        #   WHERE —— 同日时要求 count < 上限（否则 rowcount=0 = 已用尽）
         cur = conn.execute(
-            "UPDATE users SET daily_summary_count = daily_summary_count + 1 "
-            "WHERE id = ? AND daily_summary_count < ?",
-            (user_id, FREE_DAILY_SUMMARY_LIMIT),
+            "UPDATE users SET "
+            "  daily_summary_count = CASE WHEN last_summary_date = ? "
+            "    THEN COALESCE(daily_summary_count, 0) + 1 ELSE 1 END, "
+            "  last_summary_date = ? "
+            "WHERE id = ? "
+            "  AND (last_summary_date IS NULL OR last_summary_date <> ? "
+            "       OR COALESCE(daily_summary_count, 0) < ?)",
+            (today, today, user_id, today, FREE_DAILY_SUMMARY_LIMIT),
         )
         if cur.rowcount == 0:
             # 已达上限（可能刚被其他并发请求占满）

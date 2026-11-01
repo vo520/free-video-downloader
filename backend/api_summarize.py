@@ -1,6 +1,7 @@
 """AI 视频总结相关 API 路由（独立模块，通过 include_router 挂载）"""
 
 import asyncio
+import functools
 import json
 from collections.abc import AsyncIterable
 
@@ -65,6 +66,25 @@ def _get_extractor():
     return _get_extractor._instance
 
 
+def _normalize_request_url(raw_url: str) -> str:
+    """把用户输入的链接规范化为「可请求的 URL」（与 /api/parse 口径一致）。
+
+    裸数字按抖音视频 ID 处理，补全为完整链接。
+    背景：/api/parse 支持直接粘贴抖音视频 ID，前端会把 currentUrl 原样传给
+    /api/summarize 与 /api/chat；若这里不补全，_validate_video_url 会以
+    「仅支持公网 http/https 视频链接」把裸 ID 拒掉 —— 用户能解析成功的视频
+    却生成不了总结；同时落库的 video_url 也与 parse 历史 / video_cache 的
+    归一化键错位（同一视频两处对不上）。
+
+    注意：勿对"任意 >10 位字母数字串"做转换——否则会把 YouTube 等平台的
+    11 位视频 ID（如 dQw4w9WgXcQ）误判为抖音，从而转成错误链接导致失败。
+    """
+    url = (raw_url or "").strip()
+    if url.isdigit():
+        url = f"https://www.douyin.com/video/{url}"
+    return url
+
+
 def _validate_video_url(raw_url: str) -> str | None:
     """校验 AI 总结/问答传入的视频 URL。
 
@@ -117,7 +137,11 @@ async def _iterate_in_executor(gen):
 
 async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: Request):
     """生成 SSE 事件流"""
-    allowed, remaining, message = _check_summary_permission(user)
+    loop = asyncio.get_running_loop()
+    # 配额预检涉及同步 SQLite 查询，丢到线程池，避免阻塞事件循环。
+    allowed, remaining, message = await loop.run_in_executor(
+        None, _check_summary_permission, user
+    )
     if not allowed:
         yield ServerSentEvent(
             data=json.dumps({"message": message, "need_login": user is None, "need_vip": user is not None}, ensure_ascii=False),
@@ -125,8 +149,12 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
         )
         return
 
+    # 归一化：裸数字抖音 ID 补全为完整链接（与 /api/parse 口径一致），
+    # 否则能解析成功的视频却生成不了总结，且落库 URL 与 parse 历史错位。
+    video_url = _normalize_request_url(req.url)
+
     # SSRF 防护：拒绝 file:// 与内网地址后再进入字幕提取/LLM 调用。
-    url_error = _validate_video_url(req.url)
+    url_error = _validate_video_url(video_url)
     if url_error:
         yield ServerSentEvent(
             data=json.dumps({"message": url_error}, ensure_ascii=False),
@@ -135,11 +163,10 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
         return
 
     try:
-        loop = asyncio.get_running_loop()
         extractor = _get_extractor()
         # 加超时：避免 yt-dlp 在个别站点卡死时永久占满 executor 线程导致整体夯死。
         subtitle_data = await asyncio.wait_for(
-            loop.run_in_executor(None, extractor.extract, req.url),
+            loop.run_in_executor(None, extractor.extract, video_url),
             timeout=120,
         )
 
@@ -157,7 +184,24 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
 
         # 确认有字幕、将真正生成总结，此时才消费一次免费额度，
         # 避免无字幕/提取失败等场景白白扣减用户免费次数。
-        _, remaining = check_and_increment_summary(user["id"])
+        # 必须检查 allowed：字幕提取期间（可达 120s）额度可能已被其它并发请求耗尽，
+        # 此时扣减会失败，原实现忽略返回值继续生成 → 用户可突破每日免费上限。
+        consumed, remaining = await loop.run_in_executor(
+            None, check_and_increment_summary, user["id"]
+        )
+        if not consumed:
+            yield ServerSentEvent(
+                data=json.dumps(
+                    {
+                        "message": f"今日免费 AI 总结次数已用完（每日 {FREE_DAILY_SUMMARY_LIMIT} 次），开通 VIP 可无限使用",
+                        "need_login": False,
+                        "need_vip": True,
+                    },
+                    ensure_ascii=False,
+                ),
+                event="error",
+            )
+            return
 
         full_text = subtitle_data["full_text"]
         summarizer = _get_summarizer()
@@ -198,13 +242,19 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
         # best-effort：已登录用户记录总结历史，存全文供回看；失败不影响 SSE 主流程。
         # add_history 内部已吞异常并 warning，此处无需再包 try/except。
         # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        # 同步 SQLite 写必须放线程池：SSE 流在事件循环里迭代，直接写库会阻塞其它请求。
         if user and not is_shared_demo_user(user):
-            add_history(
-                user["id"], "summary",
-                video_url=req.url,
-                title=req.title or None,
-                platform=req.platform or None,
-                extra={"summary": summary_text, "mindmap": mindmap_md},
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    add_history,
+                    user["id"],
+                    "summary",
+                    video_url=video_url,
+                    title=req.title or None,
+                    platform=req.platform or None,
+                    extra={"summary": summary_text, "mindmap": mindmap_md},
+                ),
             )
 
     except asyncio.TimeoutError:
@@ -287,9 +337,14 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
         )
         return
 
+    loop = asyncio.get_running_loop()
+
     # 与 /api/summarize 一致：免费用户受每日配额限制，VIP 无限。
     # 先做权限闸门（只校验、不消耗），避免后续字幕提取已完成却因配额不足白做。
-    allowed, _, perm_message = _check_summary_permission(user)
+    # 配额查询是同步 SQLite，必须丢线程池，否则阻塞事件循环。
+    allowed, _, perm_message = await loop.run_in_executor(
+        None, _check_summary_permission, user
+    )
     if not allowed:
         yield ServerSentEvent(
             data=json.dumps(
@@ -310,19 +365,20 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
 
     try:
         if not req.subtitle_text.strip():
+            # 归一化：裸数字抖音 ID 补全为完整链接（与 /api/parse 口径一致）。
+            video_url = _normalize_request_url(req.url)
             # 仅在实际需要抓取字幕时才校验 URL（前端已传字幕时不发起任何服务端请求）。
-            url_error = _validate_video_url(req.url)
+            url_error = _validate_video_url(video_url)
             if url_error:
                 yield ServerSentEvent(
                     data=json.dumps({"message": url_error}, ensure_ascii=False),
                     event="error",
                 )
                 return
-            loop = asyncio.get_running_loop()
             extractor = _get_extractor()
             # 加超时：与 summarize 一致，防止字幕提取卡死线程。
             subtitle_data = await asyncio.wait_for(
-                loop.run_in_executor(None, extractor.extract, req.url),
+                loop.run_in_executor(None, extractor.extract, video_url),
                 timeout=120,
             )
             if not subtitle_data["has_subtitle"]:
@@ -337,7 +393,24 @@ async def _chat_stream(req: ChatRequest, user: dict | None, request: Request):
 
         # 确认有字幕、将真正发起问答，此时才消费一次免费额度
         # （与 summarize 一致：先校验字幕有效性，避免提取失败等场景白白扣减）。
-        _, remaining = check_and_increment_summary(user["id"])
+        # 必须检查扣减结果：字幕提取期间（可达 120s）额度可能已被并发请求耗尽，
+        # 忽略返回值继续调用 LLM → 用户可突破每日免费上限。
+        consumed, remaining = await loop.run_in_executor(
+            None, check_and_increment_summary, user["id"]
+        )
+        if not consumed:
+            yield ServerSentEvent(
+                data=json.dumps(
+                    {
+                        "message": f"今日免费 AI 总结次数已用完（每日 {FREE_DAILY_SUMMARY_LIMIT} 次），开通 VIP 可无限使用",
+                        "need_login": False,
+                        "need_vip": True,
+                    },
+                    ensure_ascii=False,
+                ),
+                event="error",
+            )
+            return
 
         summarizer = _get_summarizer()
         async for token in _iterate_in_executor(summarizer.chat_stream(subtitle_text, req.question)):
