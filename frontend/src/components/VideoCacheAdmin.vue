@@ -22,8 +22,8 @@
             <p class="text-sm text-text-muted">活跃缓存</p>
             <p class="text-2xl font-bold text-success">{{ stats.active_cache || 0 }}</p>
           </div>
-          <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="w-10 h-10 bg-success-bg rounded-full flex items-center justify-center">
+            <svg class="w-5 h-5 text-success-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -34,10 +34,10 @@
         <div class="flex items-center justify-between">
           <div>
             <p class="text-sm text-text-muted">热门缓存</p>
-            <p class="text-2xl font-bold text-orange-600">{{ stats.hot_cache || 0 }}</p>
+            <p class="text-2xl font-bold text-warning-text">{{ stats.hot_cache || 0 }}</p>
           </div>
-          <div class="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-            <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="w-10 h-10 bg-warning-bg rounded-full flex items-center justify-center">
+            <svg class="w-5 h-5 text-warning-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
             </svg>
           </div>
@@ -48,10 +48,10 @@
         <div class="flex items-center justify-between">
           <div>
             <p class="text-sm text-text-muted">总访问次数</p>
-            <p class="text-2xl font-bold text-purple-600">{{ stats.total_cache_hits || 0 }}</p>
+            <p class="text-2xl font-bold text-neutral-text">{{ stats.total_cache_hits || 0 }}</p>
           </div>
-          <div class="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="w-10 h-10 bg-neutral-bg rounded-full flex items-center justify-center">
+            <svg class="w-5 h-5 text-neutral-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
             </svg>
@@ -126,7 +126,7 @@
     <div class="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-border">
-          <thead class="bg-gray-50">
+          <thead class="bg-surface-muted">
             <tr>
               <th class="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">视频信息</th>
               <th class="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">平台</th>
@@ -157,7 +157,7 @@
               </td>
             </tr>
             <template v-else>
-              <tr v-for="video in videos" :key="video.id" class="hover:bg-gray-50">
+              <tr v-for="video in videos" :key="video.id" class="hover:bg-surface-muted">
                 <td class="px-6 py-4">
                   <div class="flex items-center gap-3">
                     <VideoThumbnail :url="video.thumbnail_url" size="md" />
@@ -183,7 +183,7 @@
                   >
                     {{ video.cache_status || 'active' }}
                   </span>
-                  <span v-if="video.is_hot" class="ml-2 px-2 py-1 text-xs font-medium bg-orange-100 text-orange-600 rounded-full">
+                  <span v-if="video.is_hot" class="ml-2 px-2 py-1 text-xs font-medium bg-warning-bg text-warning-text rounded-full">
                     热门
                   </span>
                 </td>
@@ -469,10 +469,21 @@ function playVideo(video) {
 }
 
 function downloadVideo(video) {
-  if (video.download_url) {
-    // 修复：原 `_blank` 在老浏览器（IE / 旧 Safari）下会暴露 window.opener 引用，可能被目标页面反向操控。
-    // 显式 noopener,noreferrer 是现代安全标准。
-    window.open(video.download_url, '_blank', 'noopener,noreferrer')
+  if (!video.download_url) {
+    showToast('该缓存没有可用的下载直链', 'error')
+    return
+  }
+  // 修复：原 `_blank` 在老浏览器（IE / 旧 Safari）下会暴露 window.opener 引用，可能被目标页面反向操控。
+  // 显式 noopener,noreferrer 是现代安全标准。
+  const win = window.open(video.download_url, '_blank', 'noopener,noreferrer')
+  // window.open 返回 null = 弹窗被浏览器拦截。原实现静默失败，用户点了没反应也不知道原因。
+  if (!win) {
+    copyText(video.download_url).then((ok) => {
+      showToast(
+        ok ? '新窗口被拦截，下载链接已复制到剪贴板' : '新窗口被拦截，请手动复制下载链接',
+        ok ? 'warning' : 'error'
+      )
+    })
   }
 }
 
@@ -595,17 +606,19 @@ function isPlayableUrl(url) {
 }
 
 function getPlatformClass(platform) {
+  // 平台标签沿用各品牌色（识别性优先），但统一走语义 token 体系，
+  // 未知平台回落到中性底色，不再直接用 Tailwind 内置灰。
   const classes = {
-    youtube: 'bg-red-100 text-red-600',
-    bilibili: 'bg-pink-100 text-pink-600',
+    youtube: 'bg-error-bg text-error-text',
+    bilibili: 'bg-pink-100 text-pink-700',
     douyin: 'bg-black text-white',
-    twitter: 'bg-blue-400 text-white'
+    twitter: 'bg-info-bg text-info-text'
   }
-  return classes[platform?.toLowerCase()] || 'bg-gray-100 text-text-secondary'
+  return classes[platform?.toLowerCase()] || 'bg-surface-muted text-text-secondary'
 }
 
 function getStatusClass(status) {
-  return status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-text-secondary'
+  return status === 'active' ? 'bg-success-bg text-success-text' : 'bg-surface-muted text-text-secondary'
 }
 
 function formatDuration(seconds) {

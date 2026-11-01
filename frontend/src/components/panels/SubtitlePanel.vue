@@ -20,7 +20,7 @@
               aria-haspopup="menu"
               aria-controls="subtitle-format-menu"
               :aria-expanded="showSubtitleDropdown"
-              class="!flex !items-center !gap-1.5 !text-xs !text-primary !hover:text-primary-dark !px-2.5 !py-1.5 !rounded-lg !hover:bg-primary-light"
+              class="flex! items-center! gap-1.5! text-xs! text-primary! hover:text-primary-dark! px-2.5! py-1.5! rounded-lg! hover:bg-primary-light!"
             >
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -40,7 +40,7 @@
               v-if="showSubtitleDropdown"
               id="subtitle-format-menu"
               role="menu"
-              class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-border-light py-1 z-10 min-w-[120px]"
+              class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-border-light py-1 z-dropdown min-w-[120px]"
             >
               <button
                 v-for="fmt in subtitleFormats"
@@ -58,7 +58,7 @@
           <BaseButton
             @click="subtitleExpanded = !subtitleExpanded"
             variant="ghost"
-            class="!text-xs !text-primary !hover:text-primary-dark"
+            class="text-xs! text-primary! hover:text-primary-dark!"
           >
             {{ subtitleExpanded ? '收起' : '展开全部' }}
           </BaseButton>

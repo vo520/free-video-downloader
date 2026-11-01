@@ -9,7 +9,7 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: `http://${process.env.VITE_BACKEND_HOST || 'localhost'}:8000`,
+        target: `http://${process.env.VITE_BACKEND_HOST || 'localhost'}:${process.env.VITE_BACKEND_PORT || 8000}`,
         changeOrigin: true,
       },
     },

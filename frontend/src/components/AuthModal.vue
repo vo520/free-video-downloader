@@ -49,7 +49,7 @@
               :aria-label="showPassword ? '隐藏密码' : '显示密码'"
               :aria-pressed="showPassword"
               variant="ghost"
-              class="!absolute !right-3 !top-1/2 !-translate-y-1/2 !text-text-muted !hover:text-text-secondary"
+              class="absolute! right-3! top-1/2! -translate-y-1/2! text-text-muted! hover:text-text-secondary!"
             >
               <svg v-if="showPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -63,8 +63,8 @@
         </div>
       </div>
 
-      <div v-if="error" class="mt-4 p-3 rounded-xl bg-red-50 border border-red-200">
-        <p class="text-sm text-red-800">{{ error }}</p>
+      <div v-if="error" class="mt-4 p-3 rounded-xl bg-error-bg border border-error/30">
+        <p class="text-sm text-error-text">{{ error }}</p>
       </div>
 
       <BaseButton
@@ -80,7 +80,7 @@
 
       <p class="mt-4 text-center text-sm text-text-secondary">
         {{ isLogin ? '还没有账号？' : '已有账号？' }}
-        <BaseButton type="button" @click="toggleMode" variant="ghost" class="!text-primary !font-medium !hover:underline">
+        <BaseButton type="button" @click="toggleMode" variant="ghost" class="text-primary! font-medium! hover:underline!">
           {{ isLogin ? '立即注册' : '去登录' }}
         </BaseButton>
       </p>

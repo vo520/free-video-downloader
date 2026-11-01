@@ -15,6 +15,31 @@
   --color-success: #13B981;
   --color-warning: #F59E0B;
   --color-error: #EF4444;
+
+  /* 语义色层：状态色 + 其浅色底。
+     之前各处直接用 Tailwind 内置色（bg-red-600 / bg-gray-100 / text-green-800…），
+     绕过了主题变量，导致同一状态在不同组件里色值不一致。统一改用这一层。 */
+  --color-success-bg: #E7F8F2;
+  --color-success-text: #0A7C55;
+  --color-warning-bg: #FEF4E2;
+  --color-warning-text: #B45309;
+  --color-error-bg: #FEECEC;
+  --color-error-text: #C23434;
+  --color-info-bg: #EAF1FF;
+  --color-info-text: #0B3FB8;
+  --color-neutral-bg: #F1F5F9;
+  --color-neutral-text: #475569;
+  --color-surface-muted: #F5F7FA;
+
+  /* 命名层级：替代散落各处的 z-10 / z-50 / z-[150] 魔法数 */
+  --z-dropdown: 100;
+  --z-drawer: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-float: 500;
+
+  /* 统一焦点环色（键盘导航可见） */
+  --color-ring: #1463FF;
 }
 
 :root {
@@ -61,4 +86,26 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+/* 全局键盘焦点环：指针点击不显示，键盘导航可见。
+   各组件的交互元素不再各自定义 focus-visible，统一继承这一条。 */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 尊重系统的"减少动态效果"设置。
+   项目里有多处 animate-spin / animate-pulse / 过渡动画，
+   前庭功能障碍用户应能关闭它们。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

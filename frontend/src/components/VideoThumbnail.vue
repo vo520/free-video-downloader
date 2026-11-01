@@ -38,8 +38,8 @@ const failed = ref(false)
 watch(() => props.url, () => { failed.value = false })
 
 const SIZE_MAP = {
-  sm: { box: 'w-14 h-10 rounded-lg bg-gray-100', icon: 'w-4 h-4' },
-  md: { box: 'w-16 h-12 rounded-lg bg-gray-100', icon: 'w-6 h-6' },
+  sm: { box: 'w-14 h-10 rounded-lg bg-surface-muted', icon: 'w-4 h-4' },
+  md: { box: 'w-16 h-12 rounded-lg bg-surface-muted', icon: 'w-6 h-6' },
   // lg：父容器已控制尺寸与裁切，这里只负责填满，避免圆角/底色与父容器叠加出现"灰色缺口"。
   lg: { box: 'w-full h-full', icon: 'w-12 h-12' },
 }

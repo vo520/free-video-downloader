@@ -6,7 +6,7 @@
         <BaseButton
           @click="downloadMindmapPng"
           variant="ghost"
-          class="!flex !items-center !gap-1.5 !text-xs !px-3 !py-1.5 !rounded-lg !text-primary !hover:bg-primary-light"
+          class="flex! items-center! gap-1.5! text-xs! px-3! py-1.5! rounded-lg! text-primary! hover:bg-primary-light!"
           title="下载 PNG 图片"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -17,7 +17,7 @@
         <BaseButton
           @click="downloadMindmapSvg"
           variant="ghost"
-          class="!flex !items-center !gap-1.5 !text-xs !px-3 !py-1.5 !rounded-lg !text-primary !hover:bg-primary-light"
+          class="flex! items-center! gap-1.5! text-xs! px-3! py-1.5! rounded-lg! text-primary! hover:bg-primary-light!"
           title="下载 SVG 矢量图"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -28,7 +28,7 @@
         <BaseButton
           @click="toggleFullscreen"
           variant="ghost"
-          class="!flex !items-center !gap-1.5 !text-xs !px-3 !py-1.5 !rounded-lg !text-primary !hover:bg-primary-light"
+          class="flex! items-center! gap-1.5! text-xs! px-3! py-1.5! rounded-lg! text-primary! hover:bg-primary-light!"
           :title="isFullscreen ? '退出全屏' : '全屏展示'"
         >
           <svg v-if="!isFullscreen" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -55,7 +55,7 @@
           v-if="isFullscreen"
           @click="toggleFullscreen"
           variant="ghost"
-          class="!fixed !top-4 !right-4 !z-50 !flex !items-center !gap-1.5 !px-4 !py-2 !rounded-lg !bg-white/90 !backdrop-blur !shadow-lg !text-sm !text-text-primary !hover:bg-white !border !border-border-light"
+          class="fixed! top-4! right-4! z-modal! flex! items-center! gap-1.5! px-4! py-2! rounded-lg! bg-white/90! backdrop-blur! shadow-lg! text-sm! text-text-primary! hover:bg-white! border! border-border-light!"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />

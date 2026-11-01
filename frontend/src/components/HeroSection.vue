@@ -1,5 +1,7 @@
 <template>
-  <section class="relative overflow-hidden transition-all"
+  <!-- id="features"：页脚关键词链接（YouTube/Bilibili/抖音/TikTok/AI 总结）都指向此处，
+       之前指向不存在的锚点，点击只会跳回页面顶部。scroll-mt 抵消 sticky 顶栏高度。 -->
+  <section id="features" class="relative overflow-hidden transition-all scroll-mt-16"
     :class="compact ? 'pt-6 pb-4 sm:pt-8 sm:pb-6' : 'pt-16 pb-12 sm:pt-24 sm:pb-16'"
   >
     <!-- 装饰背景 -->
@@ -36,7 +38,7 @@
           @dragover.prevent="dragActive = true"
           @dragleave.prevent="onDragLeave"
           @drop.prevent="onDrop"
-          class="relative flex items-center rounded-[1.75rem] bg-white/75 p-1.5 shadow-2xl shadow-primary/10 ring-1 ring-white/80 backdrop-blur-xl transition-all"
+          class="relative flex items-center rounded-2xl bg-white/80 p-1.5 shadow-lg shadow-primary/10 ring-1 ring-white/80 backdrop-blur-xl transition-all"
           :class="dragActive ? 'ring-2 ring-primary/30 scale-[1.01]' : ''"
           role="search"
           aria-label="视频链接解析"
@@ -65,7 +67,7 @@
             :disabled="loading || !url.trim()"
             variant="primary"
             size="xl"
-            class="hidden sm:inline-flex !items-center !gap-2 !h-14 !px-8 !rounded-r-[1.35rem] !rounded-l-none !text-white !font-semibold !text-base !shadow-lg !shadow-primary/25 hover:!shadow-xl hover:!shadow-primary/30"
+            class="hidden! sm:inline-flex! items-center! gap-2! h-14! px-8! rounded-r-[1.35rem]! rounded-l-none! text-white! font-semibold! text-base! shadow-lg! shadow-primary/25! hover:shadow-xl! hover:shadow-primary/30!"
           >
             <Spinner v-if="loading" size="sm" />
             <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -78,7 +80,7 @@
             type="submit"
             :disabled="loading || !url.trim()"
             variant="primary"
-            class="!sm:hidden !absolute !right-2 !top-1/2 !-translate-y-1/2 !w-9 !h-9 !flex !items-center !justify-center !rounded-full !text-white"
+            class="sm:hidden! absolute! right-2! top-1/2! -translate-y-1/2! w-9! h-9! flex! items-center! justify-center! rounded-full! text-white!"
           >
             <Spinner v-if="loading" size="xs" />
             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -94,7 +96,7 @@
             :key="example.label"
             @click="url = example.url"
             variant="outline"
-            class="!px-3 !py-1 !rounded-full !text-text-muted"
+            class="px-3! py-1! rounded-full! text-text-muted!"
           >
             {{ example.label }}
           </BaseButton>
@@ -102,7 +104,7 @@
           <BaseButton
             @click="$emit('open-batch')"
             variant="outline"
-            class="!inline-flex !items-center !gap-1 !px-3 !py-1 !rounded-full !text-text-muted"
+            class="inline-flex! items-center! gap-1! px-3! py-1! rounded-full! text-text-muted!"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -128,7 +130,7 @@
             v-if="pasteHint > 0"
             @click="$emit('open-batch', pastedText); pasteHint = 0"
             variant="ghost"
-            class="!mt-4 !inline-flex !items-center !gap-1.5 !px-4 !py-2 !rounded-full !text-sm !font-medium !text-primary !bg-primary-light !hover:bg-primary/15"
+            class="mt-4! inline-flex! items-center! gap-1.5! px-4! py-2! rounded-full! text-sm! font-medium! text-primary! bg-primary-light! hover:bg-primary/15!"
           >
             检测到 {{ pasteHint }} 个链接，去批量解析
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

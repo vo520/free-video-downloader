@@ -3,7 +3,7 @@
   <BaseButton
     @click="togglePanel"
     variant="ghost"
-    class="!fixed !bottom-24 !right-6 !z-[150] !flex !items-center !gap-2 !h-12 !pl-4 !pr-5 !rounded-full !bg-primary !hover:bg-primary-dark !text-white !shadow-xl"
+    class="fixed! bottom-24! right-6! z-float! flex! items-center! gap-2! h-12! pl-4! pr-5! rounded-full! bg-primary! hover:bg-primary-dark! text-white! shadow-xl!"
     title="历史记录"
   >
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -19,7 +19,7 @@
       <div
         v-if="open"
         @keydown.esc.window="closePanel"
-        class="fixed bottom-0 right-0 z-[160] w-full sm:w-[420px] max-h-[82vh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-border flex flex-col"
+        class="fixed bottom-0 right-0 z-drawer w-full sm:w-[420px] max-h-[82vh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-border flex flex-col"
         role="region"
         aria-label="历史记录抽屉"
       >
@@ -38,13 +38,13 @@
               @click="clearAll"
               :disabled="clearing"
               variant="ghost"
-              class="!text-xs !text-text-muted !hover:text-red-500 !disabled:opacity-50 !disabled:cursor-not-allowed"
+              class="text-xs! text-text-muted! hover:text-error-text! disabled:opacity-50! disabled:cursor-not-allowed!"
               :aria-label="clearing ? '正在清空历史记录' : '清空全部历史记录'"
             >{{ clearing ? '清空中…' : '清空' }}</BaseButton>
             <BaseButton
               @click="closePanel"
               variant="ghost"
-              class="!p-1 !text-text-muted !hover:text-text-primary"
+              class="w-9! h-9! text-text-muted! hover:text-text-primary!"
               title="收起"
               aria-label="收起历史记录抽屉"
             >
@@ -64,14 +64,15 @@
               type="text"
               placeholder="搜索标题 / 平台 / 链接"
               aria-label="搜索历史记录"
-              class="w-full pl-3 pr-8 py-1.5 text-sm rounded-lg bg-gray-100 border border-transparent focus:border-primary focus:bg-white outline-none transition-colors"
+              class="w-full pl-3 pr-10 py-2 text-sm rounded-lg bg-surface-muted border border-transparent focus:border-primary focus:bg-white outline-none transition-colors"
             />
             <BaseButton
               v-if="search"
               @click="search = ''; searchInput?.focus()"
               variant="ghost"
-              class="!absolute !right-2 !top-1/2 !-translate-y-1/2 !text-text-muted !hover:text-text-primary !p-1"
+              class="absolute! right-1! top-1/2! -translate-y-1/2! text-text-muted! hover:text-text-primary! w-8! h-8!"
               title="清除搜索"
+              aria-label="清除搜索"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -92,7 +93,7 @@
             @click="setTab(t.key)"
             :class="[
               'px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer',
-              activeTab === t.key ? 'bg-primary text-white' : 'bg-gray-100 text-text-secondary hover:bg-gray-200'
+              activeTab === t.key ? 'bg-primary text-white' : 'bg-surface-muted text-text-secondary hover:bg-neutral-bg'
             ]"
             role="tab"
             :aria-selected="activeTab === t.key"
@@ -112,12 +113,12 @@
         >
           <p v-if="loading" class="text-center text-sm text-text-muted py-12">加载中…</p>
           <template v-else-if="errorMsg">
-            <p class="text-center text-sm text-red-600 py-8">{{ errorMsg }}</p>
+            <p class="text-center text-sm text-error-text py-8">{{ errorMsg }}</p>
             <div class="text-center pb-8">
               <BaseButton
                 @click="loadItems"
                 variant="ghost"
-                class="!text-xs !text-primary !hover:underline !disabled:opacity-50"
+                class="text-xs! text-primary! hover:underline! disabled:opacity-50!"
                 :disabled="loading"
               >重试</BaseButton>
             </div>
@@ -125,7 +126,7 @@
           <!-- 操作失败横幅：仅覆盖自身，不影响下方历史列表展示（列表仍可见） -->
           <div
             v-if="actionError"
-            class="flex items-center justify-between gap-2 px-3 py-2 mb-2 rounded-lg bg-red-50 text-red-600 text-xs"
+            class="flex items-center justify-between gap-2 px-3 py-2 mb-2 rounded-lg bg-error-bg text-error-text text-xs"
             role="alert"
             aria-live="polite"
           >
@@ -133,7 +134,7 @@
               <BaseButton
                 @click="actionError = ''"
                 variant="ghost"
-                class="!shrink-0 !p-1 !hover:text-red-700"
+                class="shrink-0! w-8! h-8! hover:text-error-text!"
                 title="关闭"
                 aria-label="关闭错误提示"
               >×</BaseButton>
@@ -152,7 +153,14 @@
             class="rounded-xl border border-border-light p-3"
           >
             <div class="flex items-start justify-between gap-2">
-              <div class="flex items-start gap-3 min-w-0 flex-1 cursor-pointer" @click="onItemClick(it)">
+              <div
+                class="flex items-start gap-3 min-w-0 flex-1 cursor-pointer rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                role="button"
+                tabindex="0"
+                @click="onItemClick(it)"
+                @keydown.enter.prevent="onItemClick(it)"
+                @keydown.space.prevent="onItemClick(it)"
+              >
                 <!-- 解析历史带缩略图（已落库），无图/加载失败统一降级占位 -->
                 <VideoThumbnail :url="it.thumbnail" size="sm" />
                 <div class="min-w-0 flex-1">
@@ -168,7 +176,7 @@
                 @click="remove(it)"
                 :disabled="deletingId === it.id"
                 variant="ghost"
-                class="!shrink-0 !text-text-muted !hover:text-red-500 !transition-opacity !p-1 !disabled:opacity-40 !disabled:cursor-not-allowed"
+                class="shrink-0! text-text-muted! hover:text-error-text! transition-opacity! w-9! h-9! disabled:opacity-40! disabled:cursor-not-allowed!"
                 title="删除"
                 :aria-label="`删除历史记录：${it.title || it.video_url}`"
               >
@@ -197,7 +205,7 @@
               @click="loadMore"
               :disabled="loadingMore"
               variant="ghost"
-              class="!text-xs !text-primary !hover:underline !disabled:opacity-50 !disabled:cursor-not-allowed"
+              class="text-xs! text-primary! hover:underline! disabled:opacity-50! disabled:cursor-not-allowed!"
             >{{ loadingMore ? '加载中…' : '加载更多（已显示 ' + items.length + '/' + total + '）' }}</BaseButton>
           </div>
         </div>
@@ -314,10 +322,11 @@ function typeLabel(t) {
   return { parse: '解析', download: '下载', summary: '总结' }[t] || t
 }
 function typeTagClass(t) {
+  // 三种记录类型用同一套语义色区分：解析=主色、下载=成功色、总结=中性色。
   return {
     parse: 'text-primary',
-    download: 'text-green-600',
-    summary: 'text-purple-600',
+    download: 'text-success-text',
+    summary: 'text-neutral-text',
   }[t] || 'text-text-secondary'
 }
 
@@ -525,17 +534,17 @@ onBeforeUnmount(() => {
 .history-md :deep(li) { margin: 0.15em 0; }
 .history-md :deep(pre) {
   white-space: pre-wrap;
-  background: #f8fafc;
+  background: var(--color-surface-muted);
   padding: 0.5em;
   border-radius: 0.375rem;
   overflow-x: auto;
 }
 .history-md :deep(a) {
-  color: #2563eb;
+  color: var(--color-primary);
   text-decoration: underline;
 }
 .history-md :deep(code) {
-  background: #f1f5f9;
+  background: var(--color-neutral-bg);
   padding: 0.1em 0.3em;
   border-radius: 0.25rem;
   font-size: 0.85em;

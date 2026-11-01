@@ -3,7 +3,7 @@
   <BaseButton
     @click="togglePanel"
     variant="primary"
-    class="!fixed !bottom-6 !right-6 !z-[150] !flex !items-center !gap-2 !h-12 !pl-4 !pr-5 !rounded-full !shadow-xl !shadow-primary/25"
+    class="fixed! bottom-6! right-6! z-float! flex! items-center! gap-2! h-12! pl-4! pr-5! rounded-full! shadow-xl! shadow-primary/25!"
     title="下载任务中心"
   >
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -25,7 +25,7 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby="download-task-title"
-        class="fixed bottom-0 right-0 z-[160] w-full sm:w-[400px] max-h-[80vh] bg-white/95 rounded-t-2xl sm:rounded-2xl shadow-2xl shadow-slate-900/15 border border-white/80 backdrop-blur flex flex-col"
+        class="fixed bottom-0 right-0 z-drawer w-full sm:w-[400px] max-h-[80vh] bg-white/95 rounded-t-2xl sm:rounded-2xl shadow-2xl shadow-slate-900/15 border border-white/80 backdrop-blur flex flex-col"
         @keydown.esc.window="closePanel"
       >
         <!-- 头部 -->
@@ -42,12 +42,12 @@
               v-if="finishedCount > 0"
               @click="onClearFinished"
               variant="ghost"
-              class="!text-xs !text-text-muted !hover:text-primary"
+              class="text-xs! text-text-muted! hover:text-primary!"
             >清除已完成</BaseButton>
             <BaseButton
               @click="closePanel"
               variant="ghost"
-              class="!p-1 !text-text-muted !hover:text-text-primary"
+              class="p-1! text-text-muted! hover:text-text-primary!"
               title="收起"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,7 +86,7 @@
 
             <!-- 进度条 -->
             <div v-if="t.status === 'downloading' || t.status === 'queued' || t.status === 'done'" class="mb-2">
-              <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div class="h-1.5 bg-surface-muted rounded-full overflow-hidden">
                 <div
                   class="h-full transition-all duration-200"
                   :class="t.status === 'done' ? 'bg-success' : 'bg-primary'"
@@ -109,25 +109,25 @@
                 v-if="t.status === 'downloading' || t.status === 'queued'"
                 @click="cancel(t.id)"
                 variant="outline"
-                class="!flex-1 !h-8 !rounded-lg !text-xs !font-medium !text-text-secondary !hover:border-error !hover:text-error !border-border-light"
+                class="flex-1! h-8! rounded-lg! text-xs! font-medium! text-text-secondary! hover:border-error! hover:text-error! border-border-light!"
               >取消</BaseButton>
               <BaseButton
                 v-if="t.status === 'error' || t.status === 'canceled'"
                 @click="retry(t.id)"
                 variant="outline"
-                class="!flex-1 !h-8 !rounded-lg !text-xs !font-medium !text-text-secondary !hover:border-primary !hover:text-primary !border-border-light"
+                class="flex-1! h-8! rounded-lg! text-xs! font-medium! text-text-secondary! hover:border-primary! hover:text-primary! border-border-light!"
               >重试</BaseButton>
               <BaseButton
                 v-if="t.status === 'done'"
                 @click="remove(t.id)"
                 variant="outline"
-                class="!flex-1 !h-8 !rounded-lg !text-xs !font-medium !text-text-secondary !hover:text-text-primary !border-border-light"
+                class="flex-1! h-8! rounded-lg! text-xs! font-medium! text-text-secondary! hover:text-text-primary! border-border-light!"
               >移除</BaseButton>
               <BaseButton
                 v-if="t.status === 'error' || t.status === 'canceled'"
                 @click="remove(t.id)"
                 variant="ghost"
-                class="!w-8 !h-8 !rounded-lg !flex !items-center !justify-center !text-text-muted !hover:text-error"
+                class="w-8! h-8! rounded-lg! flex! items-center! justify-center! text-text-muted! hover:text-error!"
                 title="删除"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -204,12 +204,12 @@ function statusLabel(s) {
 function statusClass(s) {
   return (
     {
-      queued: 'bg-gray-100 text-text-secondary',
+      queued: 'bg-surface-muted text-text-secondary',
       downloading: 'bg-primary-light text-primary',
-      done: 'bg-green-50 text-success',
-      error: 'bg-red-50 text-error',
-      canceled: 'bg-gray-100 text-text-muted',
-    }[s] || 'bg-gray-100 text-text-muted'
+      done: 'bg-success-bg text-success-text',
+      error: 'bg-error-bg text-error',
+      canceled: 'bg-surface-muted text-text-muted',
+    }[s] || 'bg-surface-muted text-text-muted'
   )
 }
 // 任务状态变更时给出轻提示（完成/失败各提示一次）。

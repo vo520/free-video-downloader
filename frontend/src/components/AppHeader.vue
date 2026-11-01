@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-50 border-b border-white/70 bg-white/70 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
+  <header class="sticky top-0 z-dropdown border-b border-white/70 bg-white/70 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <a href="/" class="flex items-center gap-3" title="SaveAny - 免费在线万能视频下载器">
         <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-lg shadow-primary/20 ring-1 ring-white/40" role="img" aria-label="SaveAny Logo">
@@ -14,6 +14,7 @@
         <span class="hidden sm:inline text-xs text-primary bg-primary-light/80 px-2.5 py-1 rounded-full font-medium">万能视频下载</span>
       </a>
       <nav class="hidden md:flex items-center gap-2 text-sm text-text-secondary" aria-label="主导航">
+        <!-- 桌面端导航内容（移动端由下方汉堡菜单承载） -->
         <!-- 最近解析：点击展开历史下拉，避免导航链接点击无效 -->
         <div class="relative" ref="historyRef">
           <button
@@ -48,7 +49,7 @@
                 v-if="history.length"
                 @click="$emit('clear-history')"
                 variant="ghost"
-                class="!text-xs !text-text-muted !hover:text-red-500"
+                class="text-xs! text-text-muted! hover:text-error-text!"
                 title="清空所有本地记录"
               >
                 清空
@@ -69,7 +70,7 @@
                   @click="onPickHistory(item.url)"
                   @keydown.enter.prevent="onPickHistory(item.url)"
                   @keydown.space.prevent="onPickHistory(item.url)"
-                  class="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer flex items-start gap-2"
+                  class="w-full text-left px-3 py-2 rounded-lg hover:bg-surface-muted transition-colors cursor-pointer flex items-start gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   :title="item.url"
                 >
                   <div class="flex-shrink-0 w-7 h-7 mt-0.5 rounded-md bg-primary-light text-primary flex items-center justify-center text-xs font-semibold">
@@ -85,8 +86,9 @@
                     type="button"
                     @click.stop="onRemoveHistory(item)"
                     variant="ghost"
-                    class="!opacity-0 group-hover:opacity-100 !text-text-muted !hover:text-red-500 !transition-opacity !p-1 !self-center"
+                    class="text-text-muted! hover:text-error-text! transition-opacity! p-1! self-center! w-9! h-9! opacity-100! sm:opacity-0! sm:group-hover:opacity-100!"
                     title="删除这条"
+                    aria-label="删除这条记录"
                   >
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -101,24 +103,24 @@
       <div class="flex items-center gap-3">
         <!-- 未登录 -->
         <template v-if="!user">
-          <BaseButton @click="$emit('login')" variant="ghost" class="!hidden !sm:inline-flex !items-center !px-4 !py-2 !rounded-full !text-sm !font-medium !text-text-secondary !hover:text-primary !hover:bg-gray-50">
+          <BaseButton @click="$emit('login')" variant="ghost" class="hidden! sm:inline-flex! items-center! px-4! py-2! rounded-full! text-sm! font-medium! text-text-secondary! hover:text-primary! hover:bg-surface-muted!">
             登录
           </BaseButton>
-          <BaseButton @click="$emit('register')" variant="primary" class="!hidden !sm:inline-flex !items-center !gap-1.5 !px-4 !py-2 !rounded-full !text-sm !font-medium !shadow-sm">
+          <BaseButton @click="$emit('register')" variant="primary" class="hidden! sm:inline-flex! items-center! gap-1.5! px-4! py-2! rounded-full! text-sm! font-medium! shadow-sm!">
             免费注册
           </BaseButton>
         </template>
 
         <!-- 已登录 -->
         <template v-else>
-          <BaseButton v-if="!user.is_vip" @click="$emit('open-vip')" :loading="vipLoading" variant="ghost" class="!hidden !sm:inline-flex !items-center !gap-1.5 !px-4 !py-2 !rounded-full !text-sm !font-medium !text-primary !bg-primary-light !hover:bg-primary/15">
+          <BaseButton v-if="!user.is_vip" @click="$emit('open-vip')" :loading="vipLoading" variant="ghost" class="hidden! sm:inline-flex! items-center! gap-1.5! px-4! py-2! rounded-full! text-sm! font-medium! text-primary! bg-primary-light! hover:bg-primary/15!">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
             </svg>
             开通 VIP
           </BaseButton>
-          <span v-else class="hidden sm:inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-yellow-400 to-orange-400 text-white shadow-sm">
+          <span v-else class="hidden sm:inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-warning to-warning-text text-white shadow-sm">
             <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
             </svg>
@@ -130,7 +132,7 @@
             <BaseButton
               @click="menuOpen = !menuOpen"
               variant="ghost"
-              class="!flex !items-center !gap-2 !px-3 !py-2 !rounded-full !hover:bg-gray-50"
+              class="flex! items-center! gap-2! px-3! py-2! rounded-full! hover:bg-surface-muted!"
               aria-haspopup="menu"
               aria-controls="user-menu"
               :aria-expanded="menuOpen"
@@ -155,13 +157,19 @@
                   <span v-if="user.is_vip && user.vip_expire_at" class="ml-1">· 到期 {{ formatDate(user.vip_expire_at) }}</span>
                 </p>
               </div>
-              <BaseButton v-if="!user.is_vip" @click="menuOpen = false; $emit('open-vip')" :loading="vipLoading" variant="ghost" class="!w-full !text-left !px-4 !py-2.5 !text-sm !text-primary !hover:bg-primary-light !flex !items-center !gap-2">
+              <BaseButton v-if="!user.is_vip" @click="menuOpen = false; $emit('open-vip')" :loading="vipLoading" variant="ghost" class="w-full! text-left! px-4! py-2.5! text-sm! text-primary! hover:bg-primary-light! flex! items-center! gap-2!">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
                 </svg>
                 开通 VIP
               </BaseButton>
-              <BaseButton @click="menuOpen = false; $emit('logout')" variant="ghost" class="!w-full !text-left !px-4 !py-2.5 !text-sm !text-text-secondary !hover:bg-gray-50 !flex !items-center !gap-2">
+              <BaseButton @click="menuOpen = false; $emit('open-cache-admin')" variant="ghost" class="w-full! text-left! px-4! py-2.5! text-sm! text-text-secondary! hover:bg-surface-muted! flex! items-center! gap-2!">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V7M4 7c0 2 3.6 3.5 8 3.5S20 9 20 7m-16 0c0-2 3.6-3.5 8-3.5S20 5 20 7m-16 5c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5" />
+                </svg>
+                视频缓存管理
+              </BaseButton>
+              <BaseButton @click="menuOpen = false; $emit('logout')" variant="ghost" class="w-full! text-left! px-4! py-2.5! text-sm! text-text-secondary! hover:bg-surface-muted! flex! items-center! gap-2!">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
@@ -170,8 +178,91 @@
             </div>
           </div>
         </template>
+
+        <!-- 移动端菜单：<md 时承载「最近解析」与账号操作，
+             否则这些入口在窄屏完全不可达（桌面导航 hidden md:flex、
+             登录/注册按钮 hidden sm:inline-flex）。 -->
+        <button
+          @click="mobileOpen = !mobileOpen"
+          class="md:hidden w-11 h-11 flex items-center justify-center rounded-xl hover:bg-surface-muted transition-colors cursor-pointer"
+          :aria-expanded="mobileOpen"
+          aria-controls="mobile-menu"
+          aria-label="打开菜单"
+        >
+          <svg class="w-5 h-5 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path v-if="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
     </div>
+
+    <!-- 移动端下拉面板 -->
+    <Transition name="menu">
+      <div
+        v-if="mobileOpen"
+        id="mobile-menu"
+        class="md:hidden border-t border-border bg-white/95 backdrop-blur-xl shadow-lg"
+      >
+        <div class="max-w-7xl mx-auto px-4 py-3 space-y-1">
+          <!-- 最近解析 -->
+          <button
+            @click="mobileOpen = false; mobileHistoryOpen = !mobileHistoryOpen"
+            class="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm text-text-secondary hover:bg-surface-muted transition-colors cursor-pointer"
+            :aria-expanded="mobileHistoryOpen"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            最近解析
+            <span v-if="history.length" class="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold bg-primary text-white">
+              {{ history.length }}
+            </span>
+          </button>
+          <ul v-if="mobileHistoryOpen && recentHistory.length" class="pl-6 pb-1 space-y-0.5">
+            <li v-for="item in recentHistory" :key="(item.id != null ? item.id : item.url) + '-' + item.ts">
+              <button
+                @click="mobileOpen = false; mobileHistoryOpen = false; onPickHistory(item.url)"
+                class="w-full text-left px-3 py-2 rounded-lg text-sm text-text-primary hover:bg-surface-muted transition-colors cursor-pointer truncate"
+              >
+                {{ item.title || item.url }}
+              </button>
+            </li>
+          </ul>
+          <p v-else-if="mobileHistoryOpen" class="pl-6 py-2 text-sm text-text-muted">暂无记录</p>
+
+          <div class="border-t border-border-light my-2"></div>
+
+          <!-- 账号操作 -->
+          <template v-if="!user">
+            <BaseButton @click="mobileOpen = false; $emit('login')" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-text-secondary!">
+              登录
+            </BaseButton>
+            <BaseButton @click="mobileOpen = false; $emit('register')" variant="primary" class="w-full! px-3! py-2.5! text-sm!">
+              免费注册
+            </BaseButton>
+          </template>
+          <template v-else>
+            <div class="px-3 py-2">
+              <p class="text-sm font-medium text-text-primary truncate">{{ user.email }}</p>
+              <p class="text-xs text-text-muted mt-0.5">
+                {{ user.is_vip ? 'VIP 会员' : '免费用户' }}
+                <span v-if="user.is_vip && user.vip_expire_at" class="ml-1">· 到期 {{ formatDate(user.vip_expire_at) }}</span>
+              </p>
+            </div>
+            <BaseButton v-if="!user.is_vip" @click="mobileOpen = false; $emit('open-vip')" :loading="vipLoading" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-primary!">
+              开通 VIP
+            </BaseButton>
+            <BaseButton @click="mobileOpen = false; $emit('open-cache-admin')" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-text-secondary!">
+              视频缓存管理
+            </BaseButton>
+            <BaseButton @click="mobileOpen = false; $emit('logout')" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-text-secondary!">
+              退出登录
+            </BaseButton>
+          </template>
+        </div>
+      </div>
+    </Transition>
   </header>
 </template>
 
@@ -188,12 +279,15 @@ const props = defineProps({
   vipLoading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['login', 'register', 'logout', 'open-vip', 'reparse', 'remove-history', 'clear-history'])
+const emit = defineEmits(['login', 'register', 'logout', 'open-vip', 'reparse', 'remove-history', 'clear-history', 'open-cache-admin'])
 
 const menuOpen = ref(false)
 const menuRef = ref(null)
 const historyOpen = ref(false)
 const historyRef = ref(null)
+// 移动端菜单（<md 承载导航与账号操作）
+const mobileOpen = ref(false)
+const mobileHistoryOpen = ref(false)
 
 const RECENT_HISTORY_LIMIT = 5
 const recentHistory = computed(() => (props.history || []).slice(0, RECENT_HISTORY_LIMIT))
@@ -223,6 +317,7 @@ function handleKeydown(e) {
   if (e.key !== 'Escape') return
   if (menuOpen.value) menuOpen.value = false
   if (historyOpen.value) historyOpen.value = false
+  if (mobileOpen.value) mobileOpen.value = false
 }
 
 onMounted(() => {
@@ -242,5 +337,16 @@ onBeforeUnmount(() => {
 }
 .animate-menu-in {
   animation: menu-in 0.15s ease-out;
+}
+
+/* 移动端下拉面板的展开/收起 */
+.menu-enter-active,
+.menu-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.menu-enter-from,
+.menu-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>

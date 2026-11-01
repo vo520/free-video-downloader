@@ -54,6 +54,10 @@ const SIZE_MAP = {
   md: { btn: 'h-10 px-4 text-sm', sp: 'sm', space: 'gap-2' },
   lg: { btn: 'h-12 px-6 text-base', sp: 'sm', space: 'gap-2' },
   xl: { btn: 'h-14 px-8 text-base', sp: 'md', space: 'gap-2.5' },
+  // icon: 仅图标的方形按钮，固定 40×40（够点击，且不撑破紧凑排版）
+  icon: { btn: 'w-10 h-10 p-0', sp: 'sm', space: '' },
+  // chip: 小圆角胶囊，用于「试试：YouTube」这类轻量标签
+  chip: { btn: 'h-8 px-3 text-xs rounded-lg', sp: 'xs', space: 'gap-1' },
 }
 
 const sizeClass = computed(() => (SIZE_MAP[props.size] || SIZE_MAP.md).btn)
@@ -69,7 +73,7 @@ const variantClass = computed(() => ({
   primary:   'bg-gradient-to-r from-primary to-primary-dark hover:from-primary-dark hover:to-primary text-white shadow-sm shadow-primary/20',
   secondary: 'border border-primary/25 bg-primary-light/70 text-primary hover:bg-primary hover:text-white shadow-sm',
   ghost:     'text-primary hover:bg-primary-light/80',
-  danger:    'bg-red-600 hover:bg-red-700 text-white shadow-sm',
+  danger:    'bg-error hover:bg-error-text text-white shadow-sm',
   outline:   'bg-white/80 text-text-primary border border-border hover:border-primary hover:text-primary hover:bg-white shadow-sm',
 }[props.variant] || 'bg-gradient-to-r from-primary to-primary-dark text-white'))
 

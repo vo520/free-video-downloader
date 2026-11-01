@@ -15,9 +15,13 @@ from database import create_user, get_user_by_email, get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# 演示账号：登录后默认开通 VIP（一年有效期），仅作为前端体验/演示用。
+# 演示账号：前端在未登录时自动用它登录（utils/request.js#ensureDefaultUserLazy），
+# 让访客能直接体验云端历史、缓存等需要登录的功能。
 DEMO_EMAIL = "demo@local.com"
-DEMO_VIP_DURATION = timedelta(days=365)
+# 演示账号的 VIP 只给短时体验额度（1 天），每次登录/注册时重置。
+# 原实现给 1 年，导致所有未注册访客都是 VIP：免费 3 次/日配额与付费墙
+# 对全部用户失效，VIP 付费只剩"AI 总结"一层名义门槛。
+DEMO_VIP_DURATION = timedelta(days=1)
 
 
 class RegisterRequest(BaseModel):
@@ -31,7 +35,7 @@ class LoginRequest(BaseModel):
 
 
 def _ensure_demo_vip(email: str) -> None:
-    """若 email 为演示账号，则强制开通 VIP（默认一年）。
+    """若 email 为演示账号，则开通短期体验 VIP（1 天，每次登录重置）。
 
     不论注册还是登录入口，都保证 demo 账号以 VIP 身份返回，避免出现 demo
     因早期注册而被锁在普通用户态的情况。

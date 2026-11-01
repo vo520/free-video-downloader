@@ -1,7 +1,7 @@
 <template>
-  <div class="bg-white/85 rounded-[1.5rem] border border-white/80 shadow-2xl shadow-slate-900/10 overflow-hidden h-full flex flex-col backdrop-blur">
+  <div class="bg-white/90 rounded-2xl border border-border shadow-lg overflow-hidden h-full flex flex-col">
     <!-- 标签页导航 -->
-    <div class="flex border-b border-border-light/80 bg-slate-50/50">
+    <div class="flex border-b border-border-light/80 bg-surface-muted/50 overflow-x-auto">
       <button
         v-for="tab in tabs"
         :key="tab.key"

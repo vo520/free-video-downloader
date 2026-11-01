@@ -35,7 +35,7 @@
         v-if="quotaInfo.remaining <= 1"
         @click="emit('need-vip')"
         variant="ghost"
-        class="!text-xs !font-medium !text-primary !hover:underline"
+        class="text-xs! font-medium! text-primary! hover:underline!"
       >
         升级 VIP 无限使用
       </BaseButton>
@@ -159,8 +159,9 @@ import BaseButton from '../ui/BaseButton.vue'
     font-weight: 500;
   }
   .summary-prose :deep(pre) {
-    background: #1e293b;
-    color: #e2e8f0;
+    /* 代码块用深色底（与浅色正文形成对比），但色值仍走 token 体系 */
+    background: var(--color-neutral-text);
+    color: var(--color-bg-section);
     border-radius: 8px;
     padding: 1rem;
     overflow-x: auto;

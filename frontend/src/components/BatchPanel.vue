@@ -9,7 +9,7 @@
           </svg>
           批量解析下载
         </h3>
-        <BaseButton @click="$emit('close')" variant="ghost" class="!text-xs !text-text-muted !hover:text-primary">
+        <BaseButton @click="$emit('close')" variant="ghost" class="text-xs! text-text-muted! hover:text-primary!">
           返回单条模式
         </BaseButton>
       </div>
@@ -65,8 +65,8 @@
         >
           <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
             :class="item.status === 'done' ? 'bg-success/10 text-success'
-              : item.status === 'error' ? 'bg-red-50 text-error'
-              : 'bg-gray-100 text-text-muted'">
+              : item.status === 'error' ? 'bg-error-bg text-error'
+              : 'bg-surface-muted text-text-muted'">
             <Spinner v-if="item.status === 'parsing'" size="xs" />
             <svg v-else-if="item.status === 'done'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -107,7 +107,7 @@
             :disabled="!canDownload(item)"
             variant="primary"
             size="sm"
-            class="!shrink-0 !inline-flex !items-center !gap-1.5 !h-8 !px-3 !rounded-lg !text-xs !font-medium"
+            class="shrink-0! inline-flex! items-center! gap-1.5! h-8! px-3! rounded-lg! text-xs! font-medium!"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -122,7 +122,7 @@
             @click="retryOne(item)"
             variant="ghost"
             size="sm"
-            class="!shrink-0 !inline-flex !items-center !gap-1.5 !h-8 !px-3 !rounded-lg !text-xs !font-medium !text-primary"
+            class="shrink-0! inline-flex! items-center! gap-1.5! h-8! px-3! rounded-lg! text-xs! font-medium! text-primary!"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -223,8 +223,12 @@ async function parseAll() {
   // 并发限制：原 Promise.all 一次性并发 N 条请求，批量 20+ 链接时直接压垮后端 yt-dlp。
   // 改为每批 BATCH_PARSE_CONCURRENCY 个并行：保持速度的同时保护后端。
   const BATCH_PARSE_CONCURRENCY = 3
+  // 后端 /api/parse 限流 20 次/60 秒/IP。批量超过 20 条时第 21 条会收到 429，
+  // 若继续跑完剩余分块，只会把整批都刷成失败并刷屏式弹 toast。
+  // 这里遇到 429 直接停止本批，剩余条目标记为「已达频率上限」，并提示稍后重试。
+  let rateLimited = false
   try {
-    for (let i = 0; i < items.value.length; i += BATCH_PARSE_CONCURRENCY) {
+    for (let i = 0; i < items.value.length && !rateLimited; i += BATCH_PARSE_CONCURRENCY) {
       const chunk = items.value.slice(i, i + BATCH_PARSE_CONCURRENCY)
       await Promise.all(
         chunk.map(async (item) => {
@@ -241,9 +245,21 @@ async function parseAll() {
           } catch (err) {
             item.status = 'error'
             item.error = getApiError(err)
+            if (err?.response?.status === 429) rateLimited = true
           }
         })
       )
+    }
+    if (rateLimited) {
+      // 未开始的条目统一标注，避免留下永远「解析中」的僵尸行
+      for (const item of items.value) {
+        if (item.status === 'parsing') {
+          item.status = 'error'
+          item.error = '已达解析频率上限（每分钟 20 次），请稍后重试'
+        }
+      }
+      showToast('解析请求过于频繁，已暂停本批次，请稍后再试', 'warning')
+      return
     }
     const ok = doneItems.value.length
     const fail = items.value.length - ok

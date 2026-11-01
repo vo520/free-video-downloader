@@ -1,8 +1,8 @@
 <template>
-  <div class="bg-white/85 rounded-[1.5rem] border border-white/80 shadow-2xl shadow-slate-900/10 overflow-hidden h-full backdrop-blur">
+  <div class="bg-white/90 rounded-2xl border border-border shadow-lg overflow-hidden h-full">
     <!-- 视频信息头部 -->
     <div class="flex flex-col gap-5 p-5 sm:p-6">
-      <div class="relative w-full aspect-video rounded-[1.25rem] overflow-hidden bg-slate-100 shadow-inner ring-1 ring-black/5">
+      <div class="relative w-full aspect-video rounded-2xl overflow-hidden bg-surface-muted shadow-inner ring-1 ring-black/5">
         <!-- 内联预览播放器 -->
         <video
           v-if="showPreview && previewUrl"
@@ -81,7 +81,7 @@
           <BaseButton
             @click="copyLink"
             variant="ghost"
-            class="!shrink-0 !mt-0.5 !p-1.5 !rounded-lg !text-text-muted !hover:text-primary !hover:bg-primary-light"
+            class="shrink-0! mt-0.5! p-1.5! rounded-lg! text-text-muted! hover:text-primary! hover:bg-primary-light!"
             title="复制视频链接"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,7 +114,7 @@
     </div>
 
     <!-- 格式选择 -->
-    <div class="border-t border-border-light/80 bg-slate-50/45 px-5 sm:px-6 py-5">
+    <div class="border-t border-border-light/80 bg-surface-muted/45 px-5 sm:px-6 py-5">
       <h4 class="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
         <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -133,7 +133,7 @@
             'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
             activePreset === p.type
               ? 'border-primary bg-primary-light text-primary'
-              : 'border-border-light text-text-secondary hover:border-primary/40 hover:bg-gray-50'
+              : 'border-border-light text-text-secondary hover:border-primary/40 hover:bg-surface-muted'
           ]"
         >
           {{ p.label }}
@@ -149,11 +149,11 @@
             'flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all cursor-pointer',
             selectedFormat === fmt.format_id
               ? 'border-primary bg-primary-light ring-1 ring-primary/20'
-              : 'border-border-light hover:border-primary/40 hover:bg-gray-50'
+              : 'border-border-light hover:border-primary/40 hover:bg-surface-muted'
           ]"
         >
           <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-            :class="selectedFormat === fmt.format_id ? 'bg-primary text-white' : 'bg-gray-100 text-text-muted'">
+            :class="selectedFormat === fmt.format_id ? 'bg-primary text-white' : 'bg-surface-muted text-text-muted'">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
@@ -162,7 +162,7 @@
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-text-primary truncate">{{ fmt.label }}</span>
-              <span v-if="formatResolution(fmt)" class="shrink-0 px-1.5 py-0.5 rounded bg-gray-100 text-text-muted text-[10px] font-medium">{{ formatResolution(fmt) }}</span>
+              <span v-if="formatResolution(fmt)" class="shrink-0 px-1.5 py-0.5 rounded bg-surface-muted text-text-muted text-[10px] font-medium">{{ formatResolution(fmt) }}</span>
               <span v-if="fmt.format_id === recommendedId" class="shrink-0 px-1.5 py-0.5 rounded bg-primary-light text-primary text-[10px] font-medium">推荐</span>
             </div>
             <div class="text-xs text-text-muted">{{ fmt.ext.toUpperCase() }} {{ fmt.has_audio ? '· 含音频' : '· 仅视频' }}</div>
@@ -205,14 +205,14 @@
           {{ summarizing ? '总结中...' : 'AI 总结' }}
         </BaseButton>
       <div v-if="downloadProgress > 0" class="mt-3">
-        <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+        <div class="h-2 bg-surface-muted rounded-full overflow-hidden">
           <div class="h-full bg-primary transition-all duration-200" :style="{ width: downloadProgress + '%' }"></div>
         </div>
         <div class="text-xs text-text-muted text-center mt-1">{{ downloadProgress }}%</div>
       </div>
       <!-- 下载失败提示：与任务中心同源（downloadManager 最新任务 error 态），样式对齐 App.vue 全局 toast 的错误配色 -->
-      <div v-if="downloadError" class="mt-3 flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-red-800">
-        <svg class="w-4 h-4 shrink-0 mt-0.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div v-if="downloadError" class="mt-3 flex items-start gap-2 px-4 py-3 rounded-xl border border-error/30 bg-error-bg text-error-text">
+        <svg class="w-4 h-4 shrink-0 mt-0.5 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
         </svg>
         <span class="text-xs font-medium leading-relaxed">{{ downloadError }}</span>

@@ -11,6 +11,7 @@
       @reparse="handleParse"
       @remove-history="onRemoveHistory"
       @clear-history="onClearHistory"
+      @open-cache-admin="showCacheAdmin = true"
     />
     <main class="flex-1">
       <HeroSection
@@ -26,21 +27,21 @@
           <div class="flex flex-col lg:flex-row gap-6">
             <div class="w-full lg:w-2/5 lg:flex-shrink-0">
               <div class="bg-white rounded-2xl border border-border shadow-lg p-5 sm:p-6">
-                <div class="w-full aspect-video rounded-xl bg-gray-100 animate-pulse mb-5"></div>
-                <div class="h-5 bg-gray-100 rounded animate-pulse w-3/4 mb-3"></div>
-                <div class="h-4 bg-gray-100 rounded animate-pulse w-1/2 mb-4"></div>
-                <div class="h-10 bg-gray-100 rounded-xl animate-pulse mb-3"></div>
-                <div class="h-10 bg-gray-100 rounded-xl animate-pulse"></div>
+                <div class="w-full aspect-video rounded-xl bg-surface-muted animate-pulse mb-5"></div>
+                <div class="h-5 bg-surface-muted rounded animate-pulse w-3/4 mb-3"></div>
+                <div class="h-4 bg-surface-muted rounded animate-pulse w-1/2 mb-4"></div>
+                <div class="h-10 bg-surface-muted rounded-xl animate-pulse mb-3"></div>
+                <div class="h-10 bg-surface-muted rounded-xl animate-pulse"></div>
               </div>
             </div>
             <div class="w-full lg:w-3/5 min-w-0">
               <div class="bg-white rounded-2xl border border-border shadow-lg p-6">
-                <div class="h-4 bg-gray-100 rounded animate-pulse w-1/3 mb-5"></div>
+                <div class="h-4 bg-surface-muted rounded animate-pulse w-1/3 mb-5"></div>
                 <div class="space-y-3">
-                  <div class="h-4 bg-gray-100 rounded animate-pulse"></div>
-                  <div class="h-4 bg-gray-100 rounded animate-pulse w-5/6"></div>
-                  <div class="h-4 bg-gray-100 rounded animate-pulse w-4/6"></div>
-                  <div class="h-4 bg-gray-100 rounded animate-pulse w-3/4"></div>
+                  <div class="h-4 bg-surface-muted rounded animate-pulse"></div>
+                  <div class="h-4 bg-surface-muted rounded animate-pulse w-5/6"></div>
+                  <div class="h-4 bg-surface-muted rounded animate-pulse w-4/6"></div>
+                  <div class="h-4 bg-surface-muted rounded animate-pulse w-3/4"></div>
                 </div>
               </div>
             </div>
@@ -58,13 +59,13 @@
         <template v-else-if="history.length">
           <div class="max-w-3xl mx-auto px-4 sm:px-6">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-base font-semibold text-text-primary flex items-center gap-2">
+              <h2 class="text-base font-semibold text-text-primary flex items-center gap-2">
                 <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 最近解析
-              </h3>
-              <BaseButton @click="onClearHistory" variant="ghost" class="!text-xs !text-text-muted !hover:text-red-500">清空记录</BaseButton>
+              </h2>
+              <BaseButton @click="onClearHistory" variant="ghost" class="text-xs! text-text-muted! hover:text-error-text!">清空记录</BaseButton>
             </div>
             <ul class="space-y-2">
               <li
@@ -72,7 +73,7 @@
                 :key="item.url"
                 role="button"
                 tabindex="0"
-                class="group flex items-center gap-3 px-4 py-3 rounded-xl border border-border-light hover:border-primary/40 hover:bg-gray-50 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                class="group flex items-center gap-3 px-4 py-3 rounded-xl border border-border-light hover:border-primary/40 hover:bg-surface-muted transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                 @click="handleShowHistoryRecord(item)"
                 @keydown.enter.prevent="handleShowHistoryRecord(item)"
                 @keydown.space.prevent="handleShowHistoryRecord(item)"
@@ -87,8 +88,9 @@
                   variant="ghost"
                   size="xs"
                   shape="square"
-                  class="opacity-0 group-hover:opacity-100"
+                  class="opacity-100! sm:opacity-0! sm:group-hover:opacity-100! w-9! h-9!"
                   title="复制链接"
+                  aria-label="复制链接"
                   @click.stop="copyUrl(item.url, $event)"
                 >
                   <template #icon>
@@ -101,8 +103,9 @@
                   variant="ghost"
                   size="xs"
                   shape="square"
-                  class="opacity-0 group-hover:opacity-100 hover:text-red-500"
+                  class="opacity-100! sm:opacity-0! sm:group-hover:opacity-100! w-9! h-9! hover:text-error-text!"
                   title="删除"
+                  aria-label="删除这条记录"
                   @click.stop="onRemoveHistory(item.url)"
                 >
                   <template #icon>
@@ -156,26 +159,37 @@
         </div>
       </section>
 
-      <!-- 视频缓存管理入口 -->
-      <section class="py-8 bg-gradient-to-b from-transparent to-white/80">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6">
-          <VideoCacheAdmin />
-        </div>
-      </section>
+      <!-- 视频缓存管理入口：已改为顶栏二级页面（见下方 BaseModal） -->
     </main>
     <AppFooter />
 
+    <!--
+      视频缓存管理：作为二级页面收进弹窗，不再平铺在落地页底部。
+      原因：这是运维/管理性质的功能（总缓存数、导出、清理过期），
+      与「粘贴链接下载」的核心流程无关，平铺在首屏底部会让普通用户
+      误以为是面向自己的功能，也挤占了主流程的版面。
+    -->
+    <BaseModal
+      :modelValue="showCacheAdmin"
+      title="视频缓存管理"
+      subtitle="服务端解析结果缓存，用于加速重复解析"
+      maxWidth="7xl"
+      @update:modelValue="showCacheAdmin = $event"
+    >
+      <VideoCacheAdmin v-if="showCacheAdmin" />
+    </BaseModal>
+
     <!-- 支付成功/取消提示 -->
     <Teleport to="body">
-      <div v-if="paymentToast" class="fixed top-20 left-1/2 -translate-x-1/2 z-[200] animate-toast-in">
+      <div v-if="paymentToast" class="fixed top-20 left-1/2 -translate-x-1/2 z-toast animate-toast-in">
         <div :class="[
           'flex items-center gap-3 px-6 py-4 rounded-2xl shadow-xl border',
-          paymentToast === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-orange-50 border-orange-200 text-orange-800'
+          paymentToast === 'success' ? 'bg-success-bg border-success/30 text-success-text' : 'bg-warning-bg border-warning/30 text-warning-text'
         ]">
-          <svg v-if="paymentToast === 'success'" class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-if="paymentToast === 'success'" class="w-5 h-5 text-success shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <svg v-else class="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-else class="w-5 h-5 text-warning shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
           </svg>
           <span class="font-medium text-sm">
@@ -187,17 +201,24 @@
 
     <!-- 全局轻提示（成功/错误/信息），复用既有 toast 动画 -->
     <Teleport to="body">
-      <div v-if="appToast" class="fixed top-32 left-1/2 -translate-x-1/2 z-[200] animate-toast-in">
+      <!-- 固定在左下角而非顶部居中：顶部居中会遮挡首屏标语与解析输入框；
+           右下角是下载任务中心的悬浮按钮（fixed bottom-6 right-6），会互相压盖。
+           左下角是全站唯一空闲的角落。 -->
+      <div v-if="appToast" class="fixed bottom-6 left-4 sm:left-6 z-toast animate-toast-in">
         <div :class="[
-          'flex items-center gap-3 px-6 py-4 rounded-2xl shadow-xl border max-w-sm',
-          appToast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
-          appToast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
-          'bg-primary-light border-primary/20 text-primary'
+          'flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl border max-w-sm',
+          appToast.type === 'success' ? 'bg-success-bg border-success/30 text-success-text' :
+          appToast.type === 'error' ? 'bg-error-bg border-error/30 text-error-text' :
+          appToast.type === 'warning' ? 'bg-warning-bg border-warning/30 text-warning-text' :
+          'bg-info-bg border-primary/20 text-info-text'
         ]">
-          <svg v-if="appToast.type === 'success'" class="w-5 h-5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-if="appToast.type === 'success'" class="w-5 h-5 text-success shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <svg v-else-if="appToast.type === 'error'" class="w-5 h-5 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-else-if="appToast.type === 'error'" class="w-5 h-5 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <svg v-else-if="appToast.type === 'warning'" class="w-5 h-5 text-warning shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
           </svg>
           <svg v-else class="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -259,6 +280,7 @@ import DownloadTaskCenter from './components/DownloadTaskCenter.vue'
 import HistoryDrawer from './components/HistoryDrawer.vue'
 import VideoThumbnail from './components/VideoThumbnail.vue'
 import BaseButton from './components/ui/BaseButton.vue'
+import BaseModal from './components/ui/BaseModal.vue'
 import EmptyState from './components/ui/EmptyState.vue'
 import { createCheckoutSession } from './api/payment.js'
 import { fetchMe } from './api/auth.js'
@@ -392,6 +414,9 @@ function onDownload(formatId) {
 // ===== 批量解析面板（与 downloadManager 耦合，留在 App.vue）=====
 const batchMode = ref(false)
 const batchSeed = ref('')
+
+// 视频缓存管理（运维性质，收在弹窗里，不占用落地页版面）
+const showCacheAdmin = ref(false)
 
 function openBatch(text) {
   batchSeed.value = text || ''
