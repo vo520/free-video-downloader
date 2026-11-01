@@ -68,3 +68,99 @@ def test_non_demo_user_is_not_promoted(temp_db):
 
     user = database.get_user_by_email("normal@example.com")
     assert user["is_vip"] == 0
+
+
+# ===== 缓存规则 / 解析日志：此前两套能力完全没有被激活 =====
+
+
+@pytest.fixture()
+def cache_db(tmp_path, monkeypatch):
+    """指向临时库的 VideoCacheDB 实例。"""
+    import video_cache_db as vcdb
+
+    monkeypatch.setattr(vcdb, "VIDEO_CACHE_DB_PATH", str(tmp_path / "video_cache.db"))
+    return vcdb.VideoCacheDB()
+
+
+def test_default_cache_rules_are_seeded(cache_db):
+    """全新部署时 cache_rules 表必须被写入内置规则。
+
+    规则表此前恒空 → get_cache_ttl 遍历不到任何规则，永远回退到硬编码 86400，
+    "按平台/时长差异化 TTL" 的机制等于不存在。
+    """
+    rules = cache_db.get_cache_rules()
+    names = {r["rule_name"] for r in rules}
+    assert {"default", "short_video", "long_video"} <= names
+
+
+def test_seeding_does_not_override_existing_rules(cache_db):
+    """表非空时不再播种，用户改过的规则不会在重启后被默认值覆盖。"""
+    # 用户把内置 default 规则改成自定义 TTL
+    cache_db.save_cache_rule(
+        {
+            "rule_name": "default",
+            "rule_type": "ttl",
+            "ttl_seconds": 60,
+            "priority": 99,
+            "is_active": True,
+        }
+    )
+
+    # 重新初始化（等价于进程重启）
+    cache_db._init_db()
+
+    rules = {r["rule_name"]: r for r in cache_db.get_cache_rules()}
+    assert rules["default"]["ttl_seconds"] == 60
+    assert rules["default"]["priority"] == 99
+
+
+def test_cache_ttl_actually_uses_rules(cache_db):
+    """TTL 必须随规则命中结果变化，而不是恒定 24 小时。"""
+    from video_cache_manager import VideoCacheManager
+
+    manager = VideoCacheManager()
+    manager.db = cache_db
+
+    # 短视频（≤5 分钟）命中 short_video 规则 → 6 小时
+    assert manager.get_cache_ttl("https://x.com/v", "youtube", "720p", 120) == 21600
+    # 长视频（≥30 分钟）命中 long_video 规则 → 3 天
+    assert manager.get_cache_ttl("https://x.com/v", "youtube", "720p", 3600) == 259200
+    # 落回 default → 24 小时
+    assert manager.get_cache_ttl("https://x.com/v", "youtube", "720p", 900) == 86400
+
+
+def test_parse_log_is_recorded(tmp_path, monkeypatch):
+    """_record_parse_log 必须真的写入 parse_logs（此前无任何写入方）。"""
+    import video_cache_db as vcdb
+    import main
+
+    monkeypatch.setattr(vcdb, "VIDEO_CACHE_DB_PATH", str(tmp_path / "video_cache.db"))
+    db = vcdb.VideoCacheDB()
+    monkeypatch.setattr(vcdb, "video_cache_db", db)
+
+    main._record_parse_log(
+        "https://example.com/v", "youtube", True, 1234, "解析成功: demo", ""
+    )
+
+    logs = db.get_parse_logs(limit=10)
+    assert len(logs) == 1
+    assert logs[0]["url"] == "https://example.com/v"
+    assert logs[0]["success"] == 1
+    assert logs[0]["duration_ms"] == 1234
+    assert "解析成功" in logs[0]["message"]
+
+
+def test_parse_log_failure_does_not_break_parse(tmp_path, monkeypatch):
+    """日志写入失败必须被吞掉，不能影响解析主流程。"""
+    import main
+
+    class _BrokenDB:
+        def save_parse_log(self, *_args, **_kwargs):
+            raise RuntimeError("db down")
+
+    import video_cache_db as vcdb
+
+    monkeypatch.setattr(vcdb, "video_cache_db", _BrokenDB())
+
+    # 不抛异常即通过
+    main._record_parse_log("https://example.com/v", None, False, 10, "", "boom")

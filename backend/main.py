@@ -217,9 +217,54 @@ async def health_check():
     return {"status": "ok", "message": "万能视频下载器服务运行中"}
 
 
+def _record_parse_log(
+    url: str,
+    platform: str | None,
+    success: bool,
+    duration_ms: int,
+    message: str = "",
+    error_message: str = "",
+) -> None:
+    """写入一条解析日志（best-effort，失败不影响主流程）。
+
+    parse_logs 表此前只有 insert/GET 接口，没有任何自动写入方 ——
+    解析成功率、平台分布、耗时统计全部拿不到，/video-cache/monitor 形同虚设。
+    这里在 /api/parse 的成功与失败两条路径上各补一条。
+    """
+    try:
+        from video_cache_db import video_cache_db
+
+        video_cache_db.save_parse_log(
+            {
+                "url": (url or "")[:1000],
+                "task_id": None,
+                "status": "success" if success else "failed",
+                "progress": 100 if success else 0,
+                "stage": "parse",
+                "message": (message or "")[:500] or None,
+                "success": success,
+                "error_message": (error_message or "")[:500] or None,
+                "duration_ms": int(duration_ms),
+            }
+        )
+    except Exception:
+        # 日志是辅助信息，写失败绝不能影响解析结果
+        pass
+
+
+def _http_exception_text(exc: HTTPException) -> str:
+    """把 HTTPException 的 detail 归一化成可读文本，用于日志与提示。"""
+    detail = exc.detail
+    if isinstance(detail, dict):
+        return str(detail.get("error") or detail.get("message") or detail)
+    return str(detail)
+
+
 @app.post("/api/parse", dependencies=[Depends(_dep_limit_parse)])
 async def parse_video(req: ParseRequest, user: dict | None = Depends(get_optional_user)):
     """解析视频信息（抖音走专用模块，其他走 yt-dlp）"""
+    started = time.monotonic()
+    raw_url = req.url.strip()
     try:
         loop = asyncio.get_running_loop()
         url = req.url.strip()
@@ -263,10 +308,29 @@ async def parse_video(req: ParseRequest, user: dict | None = Depends(get_optiona
                 thumbnail=result.get("thumbnail"),
                 snapshot=result,
             )
+        # 记录成功日志（SQLite 写入丢到线程池，避免阻塞事件循环）
+        await loop.run_in_executor(
+            None,
+            _record_parse_log,
+            url,
+            result.get("platform"),
+            True,
+            int((time.monotonic() - started) * 1000),
+            f"解析成功: {result.get('title') or url}",
+            "",
+        )
         return {"success": True, "data": result}
-    except HTTPException:
+    except HTTPException as e:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _record_parse_log, raw_url, None, False,
+            int((time.monotonic() - started) * 1000), "", _http_exception_text(e),
+        )
         raise
     except Exception as e:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _record_parse_log, raw_url, None, False,
+            int((time.monotonic() - started) * 1000), "", str(e),
+        )
         raise HTTPException(status_code=400, detail={
             "success": False,
             "error": f"解析失败: {str(e)}"

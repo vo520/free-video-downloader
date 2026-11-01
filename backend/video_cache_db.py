@@ -173,6 +173,78 @@ class VideoCacheDB:
                 """
             )
             self._migrate_url_normalization(conn)
+            self._seed_default_cache_rules(conn)
+
+    # 内置默认缓存规则。
+    # 规则表此前恒空 —— get_cache_ttl 遍历不到任何规则，永远回退到硬编码的 86400，
+    # "按平台/时长差异化 TTL" 这套机制完全空转。这里在表为空时写入一组默认规则，
+    # 让规则匹配真正生效（优先级越高越先命中；duration 为 0 表示不限）。
+    DEFAULT_CACHE_RULES = (
+        {
+            "rule_name": "default",
+            "rule_type": "ttl",
+            "platform": "",
+            "url_pattern": "",
+            "quality": "",
+            "min_duration": 0,
+            "max_duration": 0,
+            "ttl_seconds": 86400,
+            "priority": 0,
+            "is_active": 1,
+            "description": "默认缓存时长 24 小时",
+        },
+        {
+            "rule_name": "short_video",
+            "rule_type": "ttl",
+            "platform": "",
+            "url_pattern": "",
+            "quality": "",
+            "min_duration": 0,
+            "max_duration": 300,
+            "ttl_seconds": 21600,
+            "priority": 10,
+            "is_active": 1,
+            "description": "短视频（≤5 分钟）缓存 6 小时",
+        },
+        {
+            "rule_name": "long_video",
+            "rule_type": "ttl",
+            "platform": "",
+            "url_pattern": "",
+            "quality": "",
+            "min_duration": 1800,
+            "max_duration": 0,
+            "ttl_seconds": 259200,
+            "priority": 10,
+            "is_active": 1,
+            "description": "长视频（≥30 分钟）缓存 3 天",
+        },
+    )
+
+    def _seed_default_cache_rules(self, conn):
+        """仅在 cache_rules 为空时写入内置规则。
+
+        刻意不做"每次启动都补齐"：用户删掉的规则不该在重启后复活；
+        只有整表为空（全新部署）时才播种默认规则。
+        """
+        count = conn.execute("SELECT COUNT(*) FROM cache_rules").fetchone()[0]
+        if count:
+            return
+        for rule in self.DEFAULT_CACHE_RULES:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO cache_rules (
+                    rule_name, rule_type, platform, url_pattern, quality,
+                    min_duration, max_duration, ttl_seconds, priority, is_active, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rule["rule_name"], rule["rule_type"], rule["platform"],
+                    rule["url_pattern"], rule["quality"], rule["min_duration"],
+                    rule["max_duration"], rule["ttl_seconds"], rule["priority"],
+                    rule["is_active"], rule["description"],
+                ),
+            )
 
     def _migrate_url_normalization(self, conn):
         """把存量记录的 video_url / url_hash 重写为当前归一化口径。

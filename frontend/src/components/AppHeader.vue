@@ -163,6 +163,12 @@
                 </svg>
                 开通 VIP
               </BaseButton>
+              <BaseButton @click="menuOpen = false; $emit('open-orders')" variant="ghost" class="w-full! text-left! px-4! py-2.5! text-sm! text-text-secondary! hover:bg-surface-muted! flex! items-center! gap-2!">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012 2h2a2 2 0 012 2M9 10h6m-6 4h6" />
+                </svg>
+                我的订单
+              </BaseButton>
               <BaseButton @click="menuOpen = false; $emit('open-cache-admin')" variant="ghost" class="w-full! text-left! px-4! py-2.5! text-sm! text-text-secondary! hover:bg-surface-muted! flex! items-center! gap-2!">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V7M4 7c0 2 3.6 3.5 8 3.5S20 9 20 7m-16 0c0-2 3.6-3.5 8-3.5S20 5 20 7m-16 5c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5" />
@@ -253,6 +259,9 @@
             <BaseButton v-if="!user.is_vip" @click="mobileOpen = false; $emit('open-vip')" :loading="vipLoading" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-primary!">
               开通 VIP
             </BaseButton>
+            <BaseButton @click="mobileOpen = false; $emit('open-orders')" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-text-secondary!">
+              我的订单
+            </BaseButton>
             <BaseButton @click="mobileOpen = false; $emit('open-cache-admin')" variant="ghost" class="w-full! justify-start! px-3! py-2.5! text-sm! text-text-secondary!">
               视频缓存管理
             </BaseButton>
@@ -279,7 +288,7 @@ const props = defineProps({
   vipLoading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['login', 'register', 'logout', 'open-vip', 'reparse', 'remove-history', 'clear-history', 'open-cache-admin'])
+const emit = defineEmits(['login', 'register', 'logout', 'open-vip', 'reparse', 'remove-history', 'clear-history', 'open-cache-admin', 'open-orders'])
 
 const menuOpen = ref(false)
 const menuRef = ref(null)

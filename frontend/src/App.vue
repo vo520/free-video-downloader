@@ -12,6 +12,7 @@
       @remove-history="onRemoveHistory"
       @clear-history="onClearHistory"
       @open-cache-admin="showCacheAdmin = true"
+      @open-orders="showOrders = true"
     />
     <main class="flex-1">
       <HeroSection
@@ -179,6 +180,17 @@
       <VideoCacheAdmin v-if="showCacheAdmin" />
     </BaseModal>
 
+    <!--
+      我的订单：后端 orders 表与 GET /payment/orders 早已存在，
+      但前端从未调用（api/payment.js#getOrders 是死代码），
+      用户购买 VIP 后没有任何页面能查到订单与支付状态。
+    -->
+    <OrderListModal
+      :modelValue="showOrders"
+      @update:modelValue="showOrders = $event"
+      @open-vip="showOrders = false; handleOpenVip()"
+    />
+
     <!-- 支付成功/取消提示 -->
     <Teleport to="body">
       <div v-if="paymentToast" class="fixed top-20 left-1/2 -translate-x-1/2 z-toast animate-toast-in">
@@ -282,6 +294,7 @@ import VideoThumbnail from './components/VideoThumbnail.vue'
 import BaseButton from './components/ui/BaseButton.vue'
 import BaseModal from './components/ui/BaseModal.vue'
 import EmptyState from './components/ui/EmptyState.vue'
+import OrderListModal from './components/OrderListModal.vue'
 import { createCheckoutSession } from './api/payment.js'
 import { fetchMe } from './api/auth.js'
 import { useDownloadManager } from './composables/useDownloadManager.js'
@@ -417,6 +430,9 @@ const batchSeed = ref('')
 
 // 视频缓存管理（运维性质，收在弹窗里，不占用落地页版面）
 const showCacheAdmin = ref(false)
+
+// 我的订单（后端 orders 表此前没有任何前端入口，支付记录无处可查）
+const showOrders = ref(false)
 
 function openBatch(text) {
   batchSeed.value = text || ''
