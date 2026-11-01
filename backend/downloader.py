@@ -367,6 +367,24 @@ class VideoDownloader:
             raise ValueError("无法获取直链")
 
         direct_url = info.get("url")
+        ext = info.get("ext") or "mp4"
+        filesize = info.get("filesize") or info.get("filesize_approx")
+
+        if not direct_url and "+" in format_id:
+            # 合并选择器（前端默认的 bestvideo+bestaudio/best）不会产出单一的 info["url"]，
+            # requested_formats 里分别是纯视频流与纯音频流。直接取 requested_formats[0]
+            # 拿到的是无音轨视频 → 前端内联预览有画面没声音。
+            # 因此优先在 info["formats"] 中挑一个同时含视频+音频的渐进式格式；找不到再退回原行为。
+            progressive = self._pick_progressive_format(info.get("formats") or [])
+            if progressive:
+                direct_url = progressive.get("url")
+                ext = progressive.get("ext") or ext
+                filesize = (
+                    progressive.get("filesize")
+                    or progressive.get("filesize_approx")
+                    or filesize
+                )
+
         if not direct_url:
             requested = info.get("requested_formats")
             if requested and len(requested) > 0:
@@ -377,7 +395,31 @@ class VideoDownloader:
 
         return {
             "direct_url": direct_url,
-            "ext": info.get("ext", "mp4"),
-            "filesize": info.get("filesize") or info.get("filesize_approx"),
+            "ext": ext,
+            "filesize": filesize,
             "title": info.get("title", "video"),
         }
+
+    @staticmethod
+    def _pick_progressive_format(formats: list) -> Optional[dict]:
+        """挑选同时含视频与音频、且带直链的渐进式格式。
+
+        合并选择器下 requested_formats 是拆开的视频流/音频流，无法单独播放出声音；
+        只有渐进式格式（vcodec 与 acodec 都不是 none）能直接用于浏览器内联预览。
+        优先分辨率最高，同分辨率优先 mp4。
+        """
+        candidates = []
+        for f in formats or []:
+            if not f.get("url"):
+                continue
+            vcodec = f.get("vcodec") or "none"
+            acodec = f.get("acodec") or "none"
+            if vcodec == "none" or acodec == "none":
+                continue
+            candidates.append(f)
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda f: (f.get("height") or 0, 1 if f.get("ext") == "mp4" else 0),
+        )
