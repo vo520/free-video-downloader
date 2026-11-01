@@ -52,7 +52,7 @@
           </div>
           <p class="mt-1 text-xs text-text-muted">
             {{ planLabel(order.plan_type) }} ·
-            创建于 {{ formatDateTime(order.created_at) }}
+            创建于 {{ formatCreatedAt(order.created_at) }}
             <template v-if="order.paid_at"> · 支付于 {{ formatDateTime(order.paid_at) }}</template>
           </p>
         </div>
@@ -68,6 +68,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { getOrders } from '../api/payment.js'
 import { formatDateTime } from '../utils/format.js'
+import { parseSqliteUtcToDate } from '../utils/relativeTime.js'
 import { getApiError } from '../utils/error.js'
 import BaseModal from './ui/BaseModal.vue'
 import BaseButton from './ui/BaseButton.vue'
@@ -115,6 +116,14 @@ function formatAmount(order) {
   const currency = (order.currency || 'cny').toUpperCase()
   const symbol = currency === 'CNY' ? '¥' : `${currency} `
   return `${symbol}${(amount / 100).toFixed(2)}`
+}
+
+// orders.created_at 由 SQLite datetime('now') 生成，是无时区的 UTC 字符串
+// （'YYYY-MM-DD HH:MM:SS'）；直接交给 formatDateTime（内部 new Date）会被按本地时区
+// 解析，东八区下订单时间恒定早 8 小时。先按 UTC 解析再格式化。
+// paid_at 由后端 datetime.now(timezone.utc).isoformat() 写入，自带时区，无需处理。
+function formatCreatedAt(ts) {
+  return formatDateTime(parseSqliteUtcToDate(ts))
 }
 
 async function loadOrders() {

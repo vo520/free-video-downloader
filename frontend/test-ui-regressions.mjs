@@ -32,11 +32,12 @@ const HARNESS_HTML = `<!DOCTYPE html>
 </html>
 `
 
-const HARNESS_JS = `import { createApp, h } from 'vue'
+const HARNESS_JS = `import { createApp, h, ref } from 'vue'
 import AppHeader from '../src/components/AppHeader.vue'
 import HeroSection from '../src/components/HeroSection.vue'
 import EmptyState from '../src/components/ui/EmptyState.vue'
 import HistoryDrawer from '../src/components/HistoryDrawer.vue'
+import OrderListModal from '../src/components/OrderListModal.vue'
 import { useToast } from '../src/composables/useToast.js'
 import { useDownloadManager } from '../src/composables/useDownloadManager.js'
 import { normalizeHistoryUrl } from '../src/composables/useHistory.js'
@@ -47,6 +48,8 @@ const Root = {
     window.__toast = { appToast, showToast }
     window.__dm = useDownloadManager()
     window.__normalizeHistoryUrl = normalizeHistoryUrl
+    // 订单弹窗默认不挂载，避免 fixed 遮罩挡住其它用例；由订单时区用例按需打开
+    window.__ordersVisible = ref(false)
     return {}
   },
   render() {
@@ -56,6 +59,10 @@ const Root = {
         history: [
           { id: 7, title: '移动端历史条目', url: 'https://example.com/v/7', platform: 'youtube', ts: Date.now() },
         ],
+      }),
+      h(OrderListModal, {
+        modelValue: window.__ordersVisible.value,
+        'onUpdate:modelValue': (v) => { window.__ordersVisible.value = v },
       }),
       h(HeroSection, {
         onParse: (u) => { window.__lastParse = u },
@@ -402,6 +409,51 @@ async function testHistoryDrawerSearchExtras(page) {
   await page.waitForTimeout(400)
 }
 
+// ---------- 7.3 订单弹窗：created_at 必须按 UTC 解析（SQLite 无时区字符串） ----------
+// orders.created_at 由 SQLite datetime('now') 生成，是无时区的 UTC 字符串
+// （'YYYY-MM-DD HH:MM:SS'）。formatDateTime 内部 new Date() 会按本地时区解析，
+// 东八区下「创建于」恒定比真实时间早 8 小时。
+async function testOrderCreatedAtTimezone(page) {
+  await page.route(
+    (url) => url.pathname === '/api/payment/orders',
+    (route) =>
+      route.fulfill({
+        json: {
+          success: true,
+          data: [
+            {
+              order_no: 'ORD-TZ-001',
+              amount: 990,
+              currency: 'cny',
+              status: 'paid',
+              plan_type: 'monthly',
+              created_at: '2026-01-02 03:04:05', // 无时区 UTC
+              paid_at: '2026-01-02T03:10:00+00:00', // 自带时区，解析无歧义
+            },
+          ],
+        },
+      })
+  )
+
+  await page.evaluate(() => { window.__ordersVisible.value = true })
+  await page.waitForFunction(() => document.body.innerText.includes('ORD-TZ-001'))
+
+  // 期望值在页面内按 UTC 计算，消除运行机器时区差异
+  const expected = await page.evaluate(() => {
+    const d = new Date('2026-01-02T03:04:05Z')
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString()
+  })
+  const text = await page.locator('[role="dialog"]').innerText()
+  assert.ok(
+    text.includes(`创建于 ${expected}`),
+    `订单创建时间未按 UTC 解析（期望「创建于 ${expected}」，实际弹窗文本：${JSON.stringify(text)}）`
+  )
+
+  // 关闭弹窗，避免 fixed 遮罩影响后续用例
+  await page.evaluate(() => { window.__ordersVisible.value = false })
+  await page.waitForTimeout(200)
+}
+
 // ---------- 7.2 历史抽屉分页：服务端插入新记录后「加载更多」不得重复已加载条目 ----------
 // 旧实现用 items.length 当 offset：抽屉打开期间服务端新增一条记录（例如刚完成的下载写入历史），
 // 整个列表后移一位，offset 指向的位置已经错位，「加载更多」会把已加载页的最后一条再拉回来，
@@ -631,6 +683,18 @@ function testSourceContracts() {
     /new Set\(items\.value\.map\(\(x\) => x\.id\)\)/.test(loadMoreBody[1]),
     'HistoryDrawer 的 loadMore 未按 id 去重（抽屉打开期间新增记录会导致重复条目）'
   )
+
+  // 订单 created_at 是 SQLite datetime('now') 的无时区 UTC 字符串，必须先按 UTC 解析
+  // 再格式化；直接交给 formatDateTime（内部 new Date）会被按本地时区解析，偏差一个时区。
+  const orderCode = stripComments(read('components/OrderListModal.vue'))
+  assert.ok(
+    /formatCreatedAt\(order\.created_at\)/.test(orderCode),
+    'OrderListModal 的 created_at 未走 formatCreatedAt（绕过 UTC 解析会偏差一个时区）'
+  )
+  assert.ok(
+    /formatDateTime\(parseSqliteUtcToDate\(ts\)\)/.test(orderCode),
+    'OrderListModal 的 formatCreatedAt 未用 parseSqliteUtcToDate 按 UTC 解析 created_at'
+  )
 }
 
 // ============================ 主流程 ============================
@@ -673,6 +737,7 @@ try {
   await testNormalizeHistoryUrl(page)
   await testHistoryDrawerSync(page, historyFixture)
   await testHistoryDrawerSearchExtras(page)
+  await testOrderCreatedAtTimezone(page)
   await testHistoryDrawerPagination(browser, url)
   testSourceContracts()
 
