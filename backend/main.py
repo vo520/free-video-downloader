@@ -32,6 +32,14 @@ douyin_parser = DouyinParser(download_dir=downloader.DOWNLOAD_DIR)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # 启动时打印生效的限流与管理员配置：这两项此前硬编码在代码里，
+    # 部署到新环境后无法确认「当前到底放行多少次、谁是管理员」。
+    print(
+        f"[限流] 解析接口：每 {parse_rate_window()} 秒最多 {parse_rate_limit()} 次/IP"
+        "（可用 PARSE_RATE_LIMIT / PARSE_RATE_WINDOW_SECONDS 调整）"
+    )
+    admins = sorted(e for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip())
+    print(f"[权限] 管理员白名单：{admins if admins else '（空，任何人都不是管理员）'}")
     yield
     download_dir = downloader.DOWNLOAD_DIR
     if os.path.exists(download_dir):
@@ -121,10 +129,51 @@ class RateLimiter:
         return max(0.0, (dq[0] + self.window_seconds) - time.monotonic())
 
 
+# ---------- 限流参数（可经环境变量调整）----------
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    """读取整型环境变量；空值 / 非数字 / 低于下限一律回退默认值。
+
+    刻意不做「解析失败就崩」：限流配置写错时应该退回默认行为，
+    而不是让整个服务启动失败或变成无限制。
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def parse_rate_limit() -> int:
+    """单 IP 每窗口允许的解析请求数（PARSE_RATE_LIMIT，默认 20）。"""
+    return _env_int("PARSE_RATE_LIMIT", 20)
+
+
+def parse_rate_window() -> int:
+    """解析限流窗口秒数（PARSE_RATE_WINDOW_SECONDS，默认 60）。"""
+    return _env_int("PARSE_RATE_WINDOW_SECONDS", 60)
+
+
 # 下载为重操作（落盘 + 占线程），更严格；解析/直链较轻。
 _download_limiter = RateLimiter(max_requests=5, window_seconds=60)
-_parse_limiter = RateLimiter(max_requests=20, window_seconds=60)
+_parse_limiter = RateLimiter(max_requests=parse_rate_limit(), window_seconds=parse_rate_window())
 _direct_limiter = RateLimiter(max_requests=20, window_seconds=60)
+
+
+def _sync_limiter(limiter: RateLimiter, max_requests: int, window_seconds: int) -> RateLimiter:
+    """把限流器阈值同步为当前配置（保留命中记录，不重置窗口）。
+
+    _parse_limiter 的阈值若只在 import 时读取一次，运行期改环境变量不会生效，
+    与「启动日志打印的生效值」也会不一致（打印的是实时读到的值，执行的却是旧值）。
+    这里每次请求前对齐一次，阈值变化即刻生效，且已有计数不会因热更新被清零。
+    """
+    if limiter.max_requests != max_requests:
+        limiter.max_requests = max_requests
+    if limiter.window_seconds != window_seconds:
+        limiter.window_seconds = window_seconds
+    return limiter
 
 
 def _limit(request: "Request", limiter: RateLimiter) -> None:
@@ -143,7 +192,8 @@ def _dep_limit_download(request: "Request") -> None:
 
 
 def _dep_limit_parse(request: "Request") -> None:
-    _limit(request, _parse_limiter)
+    # 阈值实时对齐环境变量：PARSE_RATE_LIMIT / PARSE_RATE_WINDOW_SECONDS 改动后即刻生效。
+    _limit(request, _sync_limiter(_parse_limiter, parse_rate_limit(), parse_rate_window()))
 
 
 def _dep_limit_direct(request: "Request") -> None:

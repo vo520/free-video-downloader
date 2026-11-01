@@ -41,6 +41,31 @@ def is_shared_demo_user(user: dict | None) -> bool:
     return bool(user) and (user.get("email") or "").lower() == DEMO_EMAIL
 
 
+def get_admin_emails() -> set[str]:
+    """读取管理员邮箱白名单（环境变量 ADMIN_EMAILS，逗号分隔）。
+
+    每次调用都重新读环境变量：便于测试用 monkeypatch 覆盖，
+    也允许运行期改环境变量后立即生效（无需重启进程）。
+    默认空集合 —— 即默认没有任何管理员，破坏性操作需显式配置。
+    """
+    raw = os.getenv("ADMIN_EMAILS", "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def is_admin_user(user: dict | None) -> bool:
+    """判断用户是否具备管理员权限。
+
+    公共演示账号 demo@local.com 永远不是管理员：它的凭据写在源码里，
+    任何人都能拿到，给它管理员权限等于把后台开放给全网。
+    """
+    if not user:
+        return False
+    email = (user.get("email") or "").strip().lower()
+    if not email or email == DEMO_EMAIL:
+        return False
+    return email in get_admin_emails()
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -115,3 +140,14 @@ def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(securi
         return get_user_by_id(payload["sub"])
     except HTTPException:
         return None
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """管理员闸门：非管理员一律 403。
+
+    同步函数（FastAPI 放进线程池）：内部 get_user_by_id 是同步 SQLite 查询。
+    定义在 get_current_user 之后（Depends 需在定义时就能取到被依赖函数）。
+    """
+    if not is_admin_user(user):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user

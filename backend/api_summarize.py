@@ -220,6 +220,47 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
         )
 
 
+@router.get("/summarize/quota")
+def get_summary_quota(user: dict | None = Depends(get_optional_user)):
+    """查询当前用户的 AI 总结配额（只读，不消耗额度）。
+
+    此前前端在 autoTrigger 时直接 POST /api/summarize，免费用户的 3 次/日额度
+    会被「自动触发」静默消耗 —— 用户看不到任何提示就少了一次机会。
+    这里把额度显式暴露出来，由前端决定「自动触发」还是「先询问用户」。
+
+    返回：
+      remaining  剩余次数；VIP 为 -1（无限）
+      limit      每日免费上限
+      is_vip     是否 VIP（VIP 无限用）
+      allowed    当前是否还能发起（额度用尽为 false）
+      logged_in  是否已登录（未登录前端引导去登录）
+    """
+    if not user:
+        return {
+            "success": True,
+            "data": {
+                "remaining": 0,
+                "limit": FREE_DAILY_SUMMARY_LIMIT,
+                "is_vip": False,
+                "allowed": False,
+                "logged_in": False,
+            },
+        }
+
+    allowed, remaining = check_summary_quota(user["id"])
+    return {
+        "success": True,
+        "data": {
+            # VIP 时 check_summary_quota 返回 -1 表示无限
+            "remaining": remaining,
+            "limit": FREE_DAILY_SUMMARY_LIMIT,
+            "is_vip": remaining == -1,
+            "allowed": allowed,
+            "logged_in": True,
+        },
+    }
+
+
 @router.post("/summarize")
 async def summarize_video(
     req: SummarizeRequest,

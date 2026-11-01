@@ -4,14 +4,16 @@
       :user="currentUser"
       :history="history"
       :vip-loading="openingVip"
+      :guest="isGuest"
       @login="showAuthModal('login')"
       @register="showAuthModal('register')"
       @logout="handleLogout"
+      @end-guest="handleEndGuest"
       @open-vip="handleOpenVip"
       @reparse="handleParse"
       @remove-history="onRemoveHistory"
       @clear-history="onClearHistory"
-      @open-cache-admin="showCacheAdmin = true"
+      @open-cache-admin="openCacheAdmin"
       @open-orders="showOrders = true"
     />
     <main class="flex-1">
@@ -150,6 +152,7 @@
                 :videoTitle="videoData.title"
                 :user="currentUser"
                 :auto-trigger="!summaryParams.fromHistory"
+                :manual-trigger="summaryParams.manual"
                 :key="summaryParams.key"
                 @loading-change="handleSummarizeLoadingChange"
                 @need-login="showAuthModal('login')"
@@ -296,7 +299,7 @@ import BaseModal from './components/ui/BaseModal.vue'
 import EmptyState from './components/ui/EmptyState.vue'
 import OrderListModal from './components/OrderListModal.vue'
 import { createCheckoutSession } from './api/payment.js'
-import { fetchMe } from './api/auth.js'
+import { fetchMe, isGuestSession, isGuestUser, endGuestSession, clearDemoUserCache } from './api/auth.js'
 import { useDownloadManager } from './composables/useDownloadManager.js'
 import { useToast } from './composables/useToast.js'
 import { useAuth } from './composables/useAuth.js'
@@ -314,6 +317,14 @@ const { appToast, showToast } = useToast()
 // 能不依赖 Vue runtime 直接调用（util 文件不在 setup context 中）。
 window.__appToast = showToast
 let clearLocalHistory = () => {}
+
+// ===== 访客会话（借用公共演示账号的匿名状态）=====
+// 访客 = 首个请求触发 ensureDefaultUser() 静默登录公共演示账号后的状态。
+// 此前这个状态完全隐形：顶栏显示「登录/免费注册」，用户以为自己是未登录访客，
+// 实际所有请求都带着共享账号的 token。现在显式建模并在顶栏标注「访客模式」。
+const guestSession = ref(isGuestSession())
+// auth.js 在建立/结束访客会话时回调（window 钩子模式，与 __appForceLogout 同构）
+window.__appGuestSession = (active) => { guestSession.value = !!active }
 // 下载任务中心（单例，统一管理并发/进度/取消）。
 // 提前实例化：登出回调里要用 downloadManager.clearAllTasks() 清掉上一账号的残留任务。
 const downloadManager = useDownloadManager()
@@ -330,17 +341,37 @@ const { currentUser, restoreUser, handleAuthSuccess, handleLogout } = useAuth({
 // 时同步清掉 currentUser 与历史记录，避免"界面显示已登录但 token 已清"的状态撕裂。
 // __noAuthRecover 标记的请求不会触发（见 request.js handleResponseError）。
 window.__appForceLogout = () => handleLogout()
+
+// 是否处于访客态：显式访客标记，或当前登录用户就是公共演示账号
+const isGuest = computed(() => guestSession.value || isGuestUser(currentUser.value))
+// 访客不占个人云端资源：历史留在本机（useHistory 的 isAuthed 判定），
+// 也不挂云端历史抽屉（那是共享演示账号的数据，所有访客互相可见）。
+const isAuthedUser = () => !!currentUser.value && !isGuest.value
+
 const {
   history, loadHistory, refreshHistory, removeHistory, clearHistory,
   addLocalHistory, clearLocal,
-} = useHistory({ showToast, isAuthed: () => !!currentUser.value })
+} = useHistory({ showToast, isAuthed: isAuthedUser })
 clearLocalHistory = clearLocal
 const { authModalVisible, authModalMode, showAuthModal } = useAuthModal()
 const {
   loading, videoData, currentUrl, summaryParams, summarizing,
   handleSummarize, handleSummarizeLoadingChange,
   handleParse, handleShowHistoryRecord, handleHistoryDeleted, handleHistoryCleared,
-} = useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed: () => !!currentUser.value })
+} = useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed: isAuthedUser })
+
+// ===== 结束访客会话 =====
+// 访客的解析历史本来就在本机（访客 currentUser 为 null，走 localStorage 分支），
+// 因此这里只清共享演示账号的登录态，不清本机历史 —— 否则用户白丢自己的解析记录。
+function handleEndGuest() {
+  endGuestSession()
+  guestSession.value = false
+  // 手动用演示凭据登录过的情况下 currentUser 非空，一并清掉（不触发 handleLogout，
+  // 后者会连带清掉本机历史与下载任务）。
+  currentUser.value = null
+  clearDemoUserCache()
+  showToast('已结束访客会话，解析历史仍保留在本机', 'info')
+}
 
 // ===== 历史记录双视图同步 =====
 // 登录用户有两处消费同一份服务端历史：落地页「最近解析」列表（useHistory.history）与
@@ -430,6 +461,18 @@ const batchSeed = ref('')
 
 // 视频缓存管理（运维性质，收在弹窗里，不占用落地页版面）
 const showCacheAdmin = ref(false)
+
+// 打开缓存管理后台：管理员闸门。
+// 顶栏入口已按 user.is_admin 隐藏，这里再校验一次，防止绕过 UI 直接触发。
+// 服务端 require_admin 是真正的安全边界；前端这一层只是给出明确反馈，
+// 而不是让用户对着一个必然 403 的空面板发呆。
+function openCacheAdmin() {
+  if (!currentUser.value?.is_admin) {
+    showToast('需要管理员权限：视频缓存管理仅对管理员开放', 'error')
+    return
+  }
+  showCacheAdmin.value = true
+}
 
 // 我的订单（后端 orders 表此前没有任何前端入口，支付记录无处可查）
 const showOrders = ref(false)

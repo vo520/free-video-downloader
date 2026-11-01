@@ -26,8 +26,51 @@
     <!-- :key 绑定 activeTab：切换 tab 时重建内容容器，滚动位置回到顶部。
          不加 key 时会沿用上一个 tab 的滚动位置，切到短内容 tab 时一片空白。 -->
     <div :key="activeTab" class="p-5 sm:p-6 min-h-[400px] flex-1 overflow-y-auto">
+      <!-- 配额闸门：免费用户点「生成 AI 总结」前先确认，避免自动触发静默扣减当日次数。
+           只挡「总结摘要」tab —— AI 问答是用户主动提问，不属于自动消耗。 -->
+      <div v-if="activeTab === 'summary' && quotaGate" class="flex flex-col items-center justify-center text-center py-10">
+        <div class="w-14 h-14 rounded-2xl bg-primary-light/80 text-primary flex items-center justify-center mb-4">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a1 1 0 11-2 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        </div>
+        <h3 class="text-base font-semibold text-text-primary">AI 视频总结</h3>
+        <template v-if="quotaGate.status === 'ready'">
+          <p class="mt-2 text-sm text-text-secondary">
+            今日剩余 <strong class="text-primary">{{ quotaGate.remaining }}</strong> / {{ quotaGate.limit }} 次免费总结
+          </p>
+          <p class="mt-1 text-xs text-text-muted">生成总结会消耗 1 次当日额度，确认后开始</p>
+          <div class="mt-5 flex items-center gap-2">
+            <BaseButton variant="primary" @click="startSummarize">生成 AI 总结</BaseButton>
+            <BaseButton v-if="quotaGate.remaining <= 1" variant="ghost" class="text-primary! hover:underline!" @click="emit('need-vip')">
+              升级 VIP 无限使用
+            </BaseButton>
+          </div>
+        </template>
+        <template v-else-if="quotaGate.status === 'exhausted'">
+          <p class="mt-2 text-sm text-text-secondary">
+            今日免费总结次数已用完（每日 {{ quotaGate.limit }} 次）
+          </p>
+          <p class="mt-1 text-xs text-text-muted">开通 VIP 后可无限次生成总结</p>
+          <div class="mt-5">
+            <BaseButton variant="primary" @click="emit('need-vip')">开通 VIP 无限使用</BaseButton>
+          </div>
+        </template>
+        <template v-else-if="quotaGate.status === 'login'">
+          <p class="mt-2 text-sm text-text-secondary">登录后即可生成 AI 总结</p>
+          <div class="mt-5">
+            <BaseButton variant="primary" @click="emit('need-login')">立即登录</BaseButton>
+          </div>
+        </template>
+        <template v-else>
+          <p class="mt-2 text-sm text-text-secondary">获取剩余次数失败，请稍后重试</p>
+          <div class="mt-5">
+            <BaseButton variant="primary" @click="loadQuota">重新检测</BaseButton>
+          </div>
+        </template>
+      </div>
       <SummaryPanel
-        v-if="activeTab === 'summary'"
+        v-else-if="activeTab === 'summary'"
         :summary-text="summaryText"
         :loading="loading"
         :loading-message="loadingMessage"
@@ -58,11 +101,12 @@
 
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount, inject } from 'vue'
-import { summarizeVideo } from '../api/summarize.js'
+import { summarizeVideo, fetchSummaryQuota } from '../api/summarize.js'
 import SummaryPanel from './panels/SummaryPanel.vue'
 import SubtitlePanel from './panels/SubtitlePanel.vue'
 import MindmapPanel from './panels/MindmapPanel.vue'
 import ChatPanel from './panels/ChatPanel.vue'
+import BaseButton from './ui/BaseButton.vue'
 
   const props = defineProps({
     videoUrl: { type: String, required: true },
@@ -72,6 +116,10 @@ import ChatPanel from './panels/ChatPanel.vue'
     // 点历史回看已解析过的视频时传 false，避免重跑流式 AI 总结（浪费每日配额 + 等待时间）。
     // 用户可手动点 VideoResult 顶部的「AI 总结」按钮触发。
     autoTrigger: { type: Boolean, default: true },
+    // 是否由用户主动点击「AI 总结」按钮触发（而非解析成功后自动触发）。
+    // 主动点击 = 用户已明确表达意图，直接开始，不再走配额确认闸门；
+    // 自动触发则必须先确认，否则免费用户的每日次数会被静默扣掉。
+    manualTrigger: { type: Boolean, default: false },
   })
   const emit = defineEmits(['loading-change', 'need-login', 'need-vip'])
 
@@ -89,6 +137,13 @@ import ChatPanel from './panels/ChatPanel.vue'
   const loading = ref(false)
   const loadingMessage = ref('正在提取视频字幕...')
 
+  // 配额闸门：非 null 时接管「总结摘要」tab 的展示，替代直接发起总结。
+  // 背景：解析成功后自动触发总结会直接 POST /api/summarize，
+  // 免费用户当天 3 次额度会被静默扣掉一次，用户完全不知情。
+  // 现在改为：VIP 照旧自动生成；免费用户先看到「今日剩余 N 次」，点击才消耗。
+  // status: ready(可生成) | exhausted(额度用尽) | login(未登录) | error(检测失败)
+  const quotaGate = ref(null)
+
   // 当前 SSE 总结请求的 AbortController：重新触发或组件销毁时立即中断旧请求，
   // 避免旧 chunk 继续接收并污染新状态（race condition）。
   let currentController = null
@@ -103,7 +158,43 @@ import ChatPanel from './panels/ChatPanel.vue'
     emit('loading-change', val)
   })
 
+  /**
+   * 查询当前用户的 AI 总结配额，决定是否直接生成还是先让用户确认。
+   *
+   * VIP：无限额度，直接生成（保留原有「解析完自动出总结」的体验）。
+   * 免费用户：剩余次数 > 0 时展示「今日剩余 N 次」CTA，用户点击才消耗额度；
+   *           额度用尽时引导开通 VIP。
+   * 未登录 / 查询失败：分别提示登录与重试，绝不在未知状态下自动消耗额度。
+   */
+  async function loadQuota() {
+    try {
+      const data = await fetchSummaryQuota()
+      if (!data) {
+        quotaGate.value = { status: 'error' }
+        return
+      }
+      if (!data.logged_in) {
+        quotaGate.value = { status: 'login' }
+        return
+      }
+      if (data.is_vip) {
+        quotaGate.value = null
+        startSummarize()
+        return
+      }
+      quotaGate.value = {
+        status: data.allowed ? 'ready' : 'exhausted',
+        remaining: data.remaining,
+        limit: data.limit,
+      }
+    } catch (err) {
+      quotaGate.value = { status: 'error' }
+    }
+  }
+
   async function startSummarize() {
+    // 用户已确认（或 VIP 自动触发），闸门让位给真实内容
+    quotaGate.value = null
     // 先中断上一次可能未完成的总结请求，避免旧 chunk 持续触发回调污染新状态
     if (currentController) currentController.abort()
     const controller = new AbortController()
@@ -174,7 +265,14 @@ import ChatPanel from './panels/ChatPanel.vue'
 
   onMounted(() => {
     // autoTrigger=false 时不自动跑总结（点历史回看已解析过的视频，避免重跑浪费配额）
-    if (props.autoTrigger) startSummarize()
+    if (!props.autoTrigger) return
+    // 用户主动点「AI 总结」：意图明确，直接开始，不占用配额确认闸门
+    if (props.manualTrigger) {
+      startSummarize()
+      return
+    }
+    // 自动触发：先查配额。VIP 直接生成；免费用户先看到「今日剩余 N 次」再决定
+    loadQuota()
   })
 
   // 组件卸载时中断未完成的总结请求，避免回调在已销毁组件上更新状态

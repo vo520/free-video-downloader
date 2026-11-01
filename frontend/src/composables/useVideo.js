@@ -27,14 +27,16 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
   const videoData = ref(null)
   const currentUrl = ref('')
   // Step 2 合并的双 ref:key 作 :key 重建触发器,fromHistory 控制 autoTrigger
-  const summaryParams = ref({ key: 0, fromHistory: false })
+  // manual：用户主动点「AI 总结」按钮触发（意图明确，不再走配额确认闸门）
+  const summaryParams = ref({ key: 0, fromHistory: false, manual: false })
   const summarizing = ref(false)
 
-  function bumpSummary(fromHistory) {
+  function bumpSummary(fromHistory, manual = false) {
     summaryParams.value = {
       ...summaryParams.value,
       key: summaryParams.value.key + 1,
       fromHistory,
+      manual,
     }
   }
 
@@ -43,7 +45,8 @@ export function useVideo({ showToast, refreshHistory, addLocalHistory, isAuthed 
   }
 
   function handleSummarize() {
-    bumpSummary(false)
+    // 主动点击：用户已明确表达意图，直接生成（不再弹配额确认）
+    bumpSummary(false, true)
   }
 
   async function handleParse(url) {

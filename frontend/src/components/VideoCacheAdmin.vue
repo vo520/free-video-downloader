@@ -1,5 +1,14 @@
 <template>
   <div class="video-cache-admin">
+    <!-- 无权限状态：服务端对缓存后台的全部读/写接口要求管理员（ADMIN_EMAILS 白名单）。
+         顶栏入口已对非管理员隐藏，这里再兜一层，避免出现「一片空白 + 通用报错」的困惑。 -->
+    <EmptyState
+      v-if="forbidden"
+      variant="error"
+      title="需要管理员权限"
+      desc="视频缓存管理是运维级后台，仅对管理员开放。如需访问，请将你的邮箱加入后端的 ADMIN_EMAILS 白名单后重新登录。"
+    />
+    <template v-else>
     <!--
       分区切换：缓存条目 / 缓存规则 / 解析日志。
       此前后端已实现 cache_rules 与 parse_logs 的完整 CRUD，
@@ -641,7 +650,7 @@
         </div>
       </template>
     </BaseModal>
-
+    </template>
   </div>
 </template>
 
@@ -738,12 +747,20 @@ const logsLoaded = ref(false)
 // 加载 / 错误状态；轻提示统一走全局 showToast（provide 于 App.vue）
 const loading = ref(false)
 const errorMsg = ref('')
+// 403：当前账号不是管理员（服务端 ADMIN_EMAILS 白名单），整个面板渲染无权限状态
+const forbidden = ref(false)
 const showToast = inject('showToast', () => {})
 
 onMounted(() => {
   loadStats()
   loadVideos()
 })
+
+// 403 统一识别：缓存后台的全部读/写接口都要求管理员，
+// 非管理员访问时直接切到「需要管理员权限」状态，而不是逐个接口报错。
+function isForbidden(error) {
+  return error?.response?.status === 403
+}
 
 async function loadStats() {
   try {
@@ -755,6 +772,10 @@ async function loadStats() {
     // 修复：原写法仅 console.error，用户看不到统计卡为何一直空白。
     // __silent 抑制 axios 自动 toast，这里手动补一条让用户知道。
     console.error('加载统计信息失败:', error)
+    if (isForbidden(error)) {
+      forbidden.value = true
+      return
+    }
     showToast(getApiError(error, '加载统计失败'), 'error')
   }
 }
@@ -902,6 +923,10 @@ async function loadVideos() {
       errorMsg.value = getApiError({ response }, '加载失败', '未知错误')
     }
   } catch (error) {
+    if (isForbidden(error)) {
+      forbidden.value = true
+      return
+    }
     errorMsg.value = getApiError(error, '加载失败')
   } finally {
     loading.value = false

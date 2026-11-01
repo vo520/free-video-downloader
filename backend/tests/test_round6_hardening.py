@@ -250,3 +250,279 @@ def test_demo_account_history_is_not_written(tmp_path, monkeypatch):
 
     _, total = database.get_history(uid)
     assert total == 0
+
+
+# ===== F1：AI 总结配额感知（消除「静默烧配额」）=====
+
+
+def test_summary_quota_endpoint_does_not_consume_quota(tmp_path, monkeypatch):
+    """GET /api/summarize/quota 只读：返回剩余次数，且不得消耗任何额度。
+
+    背景：前端此前在「自动触发」时直接 POST /api/summarize，
+    免费用户当天 3 次额度被静默扣掉一次，用户完全不知情。
+    改为先查配额、用户确认后再生成，前端才有了拒绝静默消耗的依据。
+    """
+    import database
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+
+    with TestClient(main.app) as c:
+        r = c.post("/api/auth/register", json={"email": "quota@example.com", "password": "Test123456"})
+        assert r.status_code == 200, r.text
+        token = r.json()["data"]["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = c.get("/api/summarize/quota", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["logged_in"] is True
+        assert data["is_vip"] is False
+        assert data["allowed"] is True
+        assert data["remaining"] == database.FREE_DAILY_SUMMARY_LIMIT
+        assert data["limit"] == database.FREE_DAILY_SUMMARY_LIMIT
+
+        # 查询不得产生任何消耗
+        user = database.get_user_by_email("quota@example.com")
+        assert (user["daily_summary_count"] or 0) == 0
+
+
+def test_summary_quota_endpoint_reports_exhausted_state(tmp_path, monkeypatch):
+    """额度用尽后 /summarize/quota 必须明确报告不可用（allowed=False, remaining=0）。"""
+    import database
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    uid = database.create_user("used@example.com", "x")["id"]
+    for _ in range(database.FREE_DAILY_SUMMARY_LIMIT):
+        assert database.check_and_increment_summary(uid)[0] is True
+
+    token = __import__("auth").create_token(uid, "used@example.com")
+    with TestClient(main.app) as c:
+        resp = c.get("/api/summarize/quota", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["allowed"] is False
+        assert data["remaining"] == 0
+        assert data["limit"] == database.FREE_DAILY_SUMMARY_LIMIT
+
+
+def test_summary_quota_endpoint_requires_no_login_for_anonymous(tmp_path, monkeypatch):
+    """未登录访问配额接口返回 logged_in=False，不报错也不泄露他人额度。"""
+    import database
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+
+    with TestClient(main.app) as c:
+        resp = c.get("/api/summarize/quota")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["logged_in"] is False
+        assert data["allowed"] is False
+        assert data["is_vip"] is False
+
+
+def test_vip_user_quota_is_unlimited(tmp_path, monkeypatch):
+    """VIP 用户的配额查询必须报告无限（is_vip=True, remaining=-1）。"""
+    import database
+    from datetime import datetime, timedelta, timezone
+    from fastapi.testclient import TestClient
+    import main
+    import auth
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    uid = database.create_user("vip@example.com", "x")["id"]
+    expire = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    with database.get_db() as conn:
+        conn.execute(
+            "UPDATE users SET is_vip = 1, vip_expire_at = ? WHERE id = ?", (expire, uid)
+        )
+
+    token = auth.create_token(uid, "vip@example.com")
+    with TestClient(main.app) as c:
+        resp = c.get("/api/summarize/quota", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["is_vip"] is True
+        assert data["remaining"] == -1
+        assert data["allowed"] is True
+
+
+# ===== F3：解析限流可配置 =====
+
+
+def test_parse_rate_limit_reads_env(monkeypatch):
+    """PARSE_RATE_LIMIT / PARSE_RATE_WINDOW_SECONDS 必须生效。"""
+    import main
+
+    monkeypatch.setenv("PARSE_RATE_LIMIT", "5")
+    monkeypatch.setenv("PARSE_RATE_WINDOW_SECONDS", "15")
+    assert main.parse_rate_limit() == 5
+    assert main.parse_rate_window() == 15
+
+
+def test_parse_rate_limit_falls_back_on_invalid_values(monkeypatch):
+    """配置写错时回退默认值，不得让限流失效（变成无限制）或启动失败。"""
+    import main
+
+    monkeypatch.delenv("PARSE_RATE_LIMIT", raising=False)
+    monkeypatch.delenv("PARSE_RATE_WINDOW_SECONDS", raising=False)
+    assert main.parse_rate_limit() == 20
+    assert main.parse_rate_window() == 60
+
+    for bad in ("abc", "0", "-5", "1.5", "  "):
+        monkeypatch.setenv("PARSE_RATE_LIMIT", bad)
+        assert main.parse_rate_limit() == 20, f"非法值 {bad!r} 应回退默认值"
+
+    monkeypatch.setenv("PARSE_RATE_WINDOW_SECONDS", "not-a-number")
+    assert main.parse_rate_window() == 60
+
+
+def test_parse_limiter_applies_env_at_runtime(monkeypatch):
+    """限流阈值必须在请求时对齐环境变量（改配置即刻生效，而非仅进程启动时）。"""
+    import main
+
+    monkeypatch.setenv("PARSE_RATE_LIMIT", "3")
+    monkeypatch.setenv("PARSE_RATE_WINDOW_SECONDS", "30")
+    main._sync_limiter(main._parse_limiter, main.parse_rate_limit(), main.parse_rate_window())
+    assert main._parse_limiter.max_requests == 3
+    assert main._parse_limiter.window_seconds == 30
+
+
+def test_rate_limiter_blocks_over_limit_requests():
+    """超过阈值必须返回 429（限流本身有效，不只是配置项存在）。"""
+    import main
+    from fastapi import HTTPException
+
+    class _FakeRequest:
+        def __init__(self, ip):
+            self.client = type("C", (), {"host": ip})()
+            self.headers = {}
+
+    limiter = main.RateLimiter(max_requests=2, window_seconds=60)
+    req = _FakeRequest("9.9.9.9")
+    main._limit(req, limiter)
+    main._limit(req, limiter)
+    with pytest.raises(HTTPException) as exc:
+        main._limit(req, limiter)
+    assert exc.value.status_code == 429
+
+
+# ===== F4：视频缓存后台管理员化 =====
+
+
+def test_admin_whitelist_parsing(monkeypatch):
+    """ADMIN_EMAILS 解析：逗号分隔、去空格、忽略大小写；空值表示没有管理员。"""
+    from auth import get_admin_emails, is_admin_user
+
+    monkeypatch.setenv("ADMIN_EMAILS", " Boss@Example.com , ops@example.com ")
+    assert get_admin_emails() == {"boss@example.com", "ops@example.com"}
+    assert is_admin_user({"email": "boss@example.com"}) is True
+    assert is_admin_user({"email": "BOSS@EXAMPLE.COM"}) is True
+    assert is_admin_user({"email": "other@example.com"}) is False
+    assert is_admin_user(None) is False
+
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    assert get_admin_emails() == set()
+    assert is_admin_user({"email": "boss@example.com"}) is False
+
+
+def test_demo_account_can_never_be_admin(monkeypatch):
+    """公共演示账号永远不是管理员（凭据公开 = 后台对全网开放）。"""
+    from auth import is_admin_user
+
+    monkeypatch.setenv("ADMIN_EMAILS", "demo@local.com")
+    assert is_admin_user({"email": "demo@local.com"}) is False
+    assert is_admin_user({"email": "DEMO@LOCAL.COM"}) is False
+
+
+def test_video_cache_admin_routes_require_admin(tmp_path, monkeypatch):
+    """缓存后台的读写接口：非管理员 403，管理员放行。"""
+    import database
+    import video_cache_db as vcdb
+    import api_video_cache
+    import auth
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    # 缓存后台读接口要落到临时库，避免污染开发库
+    monkeypatch.setattr(
+        api_video_cache, "video_cache_db", vcdb.VideoCacheDB(str(tmp_path / "vc.db"))
+    )
+
+    uid = database.create_user("normal@example.com", "x")["id"]
+    token = auth.create_token(uid, "normal@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with TestClient(main.app) as c:
+        resp = c.get("/api/video-cache/stats", headers=headers)
+        assert resp.status_code == 403, resp.text
+        assert "管理员" in resp.json()["detail"]
+
+        # 加入白名单后放行
+        monkeypatch.setenv("ADMIN_EMAILS", "normal@example.com")
+        resp = c.get("/api/video-cache/stats", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+
+def test_video_cache_write_route_still_open_to_logged_users(tmp_path, monkeypatch):
+    """POST /api/video-cache/videos 必须保持「登录即可」，否则正常用户的解析结果再也进不了缓存。"""
+    import database
+    import video_cache_db as vcdb
+    import api_video_cache
+    import auth
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    monkeypatch.setattr(
+        api_video_cache, "video_cache_db", vcdb.VideoCacheDB(str(tmp_path / "vc.db"))
+    )
+    monkeypatch.setenv("ADMIN_EMAILS", "someone-else@example.com")
+
+    uid = database.create_user("writer@example.com", "x")["id"]
+    token = auth.create_token(uid, "writer@example.com")
+
+    with TestClient(main.app) as c:
+        resp = c.post(
+            "/api/video-cache/videos",
+            json={"url": "https://example.com/v1", "video_info": {}, "metadata": {}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+
+
+def test_auth_response_exposes_is_admin(tmp_path, monkeypatch):
+    """登录/注册/me 响应必须带 is_admin，前端据此收敛「视频缓存管理」入口。"""
+    import database
+    from fastapi.testclient import TestClient
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+
+    with TestClient(main.app) as c:
+        r = c.post("/api/auth/register", json={"email": "admin@example.com", "password": "Test123456"})
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["user"]["is_admin"] is False
+
+        token = r.json()["data"]["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+        resp = c.get("/api/auth/me", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["is_admin"] is True
+

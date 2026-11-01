@@ -7,6 +7,7 @@ from auth import (
     create_token,
     get_current_user,
     hash_password,
+    is_admin_user,
     validate_email,
     validate_password,
     verify_password,
@@ -78,6 +79,10 @@ def _build_user_response(user: dict) -> dict:
         "email": user["email"],
         "is_vip": is_vip,
         "vip_expire_at": vip_expire_at,
+        # 管理员标识：前端据此决定是否展示「视频缓存管理」入口。
+        # 服务端仍会独立校验（require_admin），前端隐藏只是避免给出
+        # 一个必然 403 的入口，不是安全边界。
+        "is_admin": is_admin_user(user),
     }
 
 

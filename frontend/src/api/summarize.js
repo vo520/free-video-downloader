@@ -11,7 +11,7 @@
  */
 
 import { getToken, logout } from './auth'
-import { showFetchError } from '../utils/request'
+import request, { showFetchError } from '../utils/request'
 import { getApiError } from '../utils/error'
 
 /**
@@ -126,6 +126,22 @@ function authHeaders() {
   const headers = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
+}
+
+/**
+ * 查询当前用户的 AI 总结配额（只读，不消耗额度）。
+ *
+ * 用途：前端在「自动触发总结」之前先问一次配额，让免费用户自己决定是否消耗
+ * 当日免费次数（此前自动触发会静默扣掉 3 次/日里的一次，用户毫无感知）。
+ *
+ * 走 axios 实例（而非 fetch）：与其它业务请求一致，自动带上 Authorization，
+ * 并复用统一错误处理（401 时登出 + 提示）。
+ *
+ * @returns {Promise<{remaining: number, limit: number, is_vip: boolean, allowed: boolean, logged_in: boolean}>}
+ */
+export async function fetchSummaryQuota() {
+  const { data } = await request.get('/summarize/quota')
+  return data?.data || null
 }
 
 export async function summarizeVideo(url, language = 'zh', callbacks = {}, title = '', platform = '', signal = null) {

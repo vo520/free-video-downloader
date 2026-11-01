@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
-from auth import get_current_user
+from auth import get_current_user, require_admin
 
 router = APIRouter(
     prefix="/api/video-cache",
@@ -19,6 +19,13 @@ router = APIRouter(
     # B17：视频缓存接口全部要求登录，禁止匿名读取/删除/导出/清理缓存与解析日志。
     dependencies=[Depends(get_current_user)],
 )
+
+# ===== 管理员闸门说明 =====
+# video_cache 表刻意保持全局共享（不加 user_id）：同一视频只存一份，命中率才高。
+# 代价是「删除/清理/改规则/导出」这类操作会影响所有人的缓存，属于运维级破坏性操作，
+# 不能让任意登录用户执行 —— 因此这些路由额外要求管理员（ADMIN_EMAILS 白名单）。
+# 普通用户的解析结果归档（POST /videos）与解析日志写入（POST /logs）保持登录即可，
+# 否则正常用户的解析结果就再也进不了缓存了。
 
 try:
     from video_cache_db import video_cache_db
@@ -91,7 +98,7 @@ class SaveParseLogRequest(BaseModel):
 
 # ===== 缓存数据API =====
 
-@router.get("/videos")
+@router.get("/videos", dependencies=[Depends(require_admin)])
 def get_videos(
     cache_status: Optional[str] = Query(None, description="缓存状态筛选"),
     platform: Optional[str] = Query(None, description="平台筛选"),
@@ -133,7 +140,7 @@ def get_videos(
         raise _internal_error(e)
 
 
-@router.get("/videos/{url:path}")
+@router.get("/videos/{url:path}", dependencies=[Depends(require_admin)])
 def get_video(url: str):
     """获取单个视频缓存详情"""
     if not DB_ENABLED:
@@ -206,7 +213,7 @@ def save_video(req: SaveVideoRequest):
         raise _internal_error(e)
 
 
-@router.put("/videos/status")
+@router.put("/videos/status", dependencies=[Depends(require_admin)])
 def update_cache_status(req: UpdateCacheStatusRequest):
     """更新视频缓存状态"""
     if not DB_ENABLED:
@@ -230,7 +237,7 @@ def update_cache_status(req: UpdateCacheStatusRequest):
         raise _internal_error(e)
 
 
-@router.delete("/videos/{url:path}")
+@router.delete("/videos/{url:path}", dependencies=[Depends(require_admin)])
 def delete_video(url: str):
     """删除视频缓存"""
     if not DB_ENABLED:
@@ -252,7 +259,7 @@ def delete_video(url: str):
         raise _internal_error(e)
 
 
-@router.put("/videos/{url:path}/hot")
+@router.put("/videos/{url:path}/hot", dependencies=[Depends(require_admin)])
 def mark_video_hot(url: str):
     """标记为热门缓存"""
     if not DB_ENABLED:
@@ -274,7 +281,7 @@ def mark_video_hot(url: str):
 
 # ===== 统计信息API =====
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(require_admin)])
 def get_cache_stats():
     """获取缓存统计信息"""
     if not DB_ENABLED:
@@ -291,7 +298,7 @@ def get_cache_stats():
         raise _internal_error(e)
 
 
-@router.get("/validate")
+@router.get("/validate", dependencies=[Depends(require_admin)])
 def validate_cache(url: str = Query(..., description="待校验的视频 URL")):
     """校验单条缓存是否有效（是否过期/解析失败）。
 
@@ -309,7 +316,7 @@ def validate_cache(url: str = Query(..., description="待校验的视频 URL")):
         raise _internal_error(e)
 
 
-@router.get("/lifecycle")
+@router.get("/lifecycle", dependencies=[Depends(require_admin)])
 def get_lifecycle_report():
     """获取缓存生命周期报告（按龄分布、规则汇总与优化建议）。"""
     if not DB_ENABLED:
@@ -324,7 +331,7 @@ def get_lifecycle_report():
         raise _internal_error(e)
 
 
-@router.post("/cleanup")
+@router.post("/cleanup", dependencies=[Depends(require_admin)])
 def cleanup_expired_cache():
     """清理过期缓存"""
     if not DB_ENABLED:
@@ -343,7 +350,7 @@ def cleanup_expired_cache():
 
 # ===== 缓存规则API =====
 
-@router.get("/rules")
+@router.get("/rules", dependencies=[Depends(require_admin)])
 def get_cache_rules():
     """获取缓存规则列表"""
     if not DB_ENABLED:
@@ -360,7 +367,7 @@ def get_cache_rules():
         raise _internal_error(e)
 
 
-@router.post("/rules")
+@router.post("/rules", dependencies=[Depends(require_admin)])
 def save_cache_rule(req: SaveCacheRuleRequest):
     """保存缓存规则"""
     if not DB_ENABLED:
@@ -378,7 +385,7 @@ def save_cache_rule(req: SaveCacheRuleRequest):
         raise _internal_error(e)
 
 
-@router.delete("/rules/{rule_name}")
+@router.delete("/rules/{rule_name}", dependencies=[Depends(require_admin)])
 def delete_cache_rule(rule_name: str):
     """删除缓存规则"""
     if not DB_ENABLED:
@@ -402,7 +409,7 @@ def delete_cache_rule(rule_name: str):
 
 # ===== 解析日志API =====
 
-@router.get("/logs")
+@router.get("/logs", dependencies=[Depends(require_admin)])
 def get_parse_logs(limit: int = Query(100, ge=1, le=500)):
     """获取解析任务日志"""
     if not DB_ENABLED:
@@ -440,7 +447,7 @@ def save_parse_log(req: SaveParseLogRequest):
 
 # ===== 实时监控API =====
 
-@router.get("/monitor/status")
+@router.get("/monitor/status", dependencies=[Depends(require_admin)])
 def get_monitor_status():
     """获取实时监控状态"""
     if not DB_ENABLED:
@@ -473,7 +480,7 @@ def get_monitor_status():
         raise _internal_error(e)
 
 
-@router.get("/monitor/health")
+@router.get("/monitor/health", dependencies=[Depends(require_admin)])
 def get_system_health():
     """获取系统健康状态"""
     if not DB_ENABLED:
@@ -518,7 +525,7 @@ def get_system_health():
 
 # ===== 导出API =====
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(require_admin)])
 def export_cache_data(
     format: str = Query("json", pattern="^(json|csv)$"),
     cache_status: Optional[str] = Query(None),
