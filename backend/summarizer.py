@@ -183,6 +183,19 @@ class SubtitleExtractor:
 
         segments = self._download_and_parse(url, lang, sub_type)
 
+        # 防御：字幕 URL 能取到，但实际下载/解析后没有任何有效分段（yt-dlp 拉取失败、
+        # 字幕文件只有头部没有正文、正文全是空行等）。此时若仍返回 has_subtitle=True，
+        # 上游 _summarize_stream / _chat_stream 会照常扣减免费额度，再拿着空文本调用
+        # LLM，用户既被扣次数又拿到空总结。与"无字幕"同一语义，按无字幕返回。
+        if not segments:
+            return {
+                "has_subtitle": False,
+                "language": "",
+                "subtitle_type": "none",
+                "segments": [],
+                "full_text": "",
+            }
+
         full_text = " ".join(seg["text"] for seg in segments)
 
         return {
@@ -262,6 +275,10 @@ class SubtitleExtractor:
                     "text": content,
                 })
 
+            # 与通用路径一致：字幕接口返回了 body 但没有任何有效正文时按无字幕处理，
+            # 避免上层对空文本扣减额度并调用 LLM。
+            if not segments:
+                return empty
             full_text = " ".join(seg["text"] for seg in segments)
             return {
                 "has_subtitle": True,

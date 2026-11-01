@@ -525,10 +525,16 @@ class VideoCacheDB:
                 # 否则会保留旧的（可能已过期）到期时间，缓存刚被激活就被
                 # cleanup_expired 判定过期删除。其它状态沿用原到期时间。
                 if status == "active":
+                    # 注意不能写 _now()：那等于「刚激活就已过期」，cleanup_expired 按
+                    # cache_expires_at < now 直接 DELETE，激活后的条目下一次清理就没了。
+                    # 这里按默认 TTL(1 天) 从当前时刻续期，与 save_video 的兜底一致。
+                    refreshed_expiry = (
+                        datetime.now(timezone.utc) + timedelta(seconds=86400)
+                    ).isoformat()
                     cur = conn.execute(
                         "UPDATE video_cache SET cache_status=?, cache_expires_at=?, updated_at=? "
                         "WHERE video_url=?",
-                        (status, _now(), _now(), key),
+                        (status, refreshed_expiry, _now(), key),
                     )
                 else:
                     cur = conn.execute(

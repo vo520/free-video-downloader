@@ -87,10 +87,15 @@ def create_token(user_id: int, email: str) -> str:
 def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        # 防御：缺 sub 或 sub 非整数时按无效 Token 处理，避免 int() 抛 KeyError 导致 500
+        # 防御：缺 sub 或 sub 非整数时按无效 Token 处理。
+        # int() 对 "abc" 抛 ValueError、对 None/列表等抛 TypeError，二者都不会被下面的
+        # jwt.InvalidTokenError 分支捕获，会直接冒泡成 500 —— 必须在这里归一成无效 Token。
         if "sub" not in payload:
             raise jwt.InvalidTokenError("missing sub")
-        payload["sub"] = int(payload["sub"])
+        try:
+            payload["sub"] = int(payload["sub"])
+        except (ValueError, TypeError):
+            raise jwt.InvalidTokenError("invalid sub")
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token 已过期，请重新登录")

@@ -74,7 +74,7 @@ def _save(db, url="https://x.test/v"):
 
 
 def test_update_status_active_refreshes_expiry(db):
-    """置为 active 时必须刷新到期时间，否则保留旧的已过期时间会被立即清理。"""
+    """置为 active 时必须刷新到未来的到期时间，否则会保留旧的已过期时间被立即清理。"""
     _save(db)
     # 先把到期时间改到过去
     db.update_cache_status("https://x.test/v", "active", "2000-01-01T00:00:00+00:00")
@@ -85,6 +85,10 @@ def test_update_status_active_refreshes_expiry(db):
     assert row["cache_status"] == "active"
     # 到期时间应被刷新到未来，不再是过去时刻
     assert row["cache_expires_at"] > "2026-01-01T00:00:00+00:00"
+    # 关键回归：到期时间不能等于「当前时刻」。旧实现写 _now()，等于刚激活就已过期，
+    # 下一次 cleanup_expired（cache_expires_at < now 直接 DELETE）会把记录删掉。
+    assert db.cleanup_expired() == 0, "刚激活的缓存不得被立即清理"
+    assert db.get_video("https://x.test/v") is not None
 
 
 def test_update_status_non_active_keeps_expiry(db):

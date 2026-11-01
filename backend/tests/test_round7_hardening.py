@@ -454,3 +454,142 @@ def test_history_uses_canonical_url_key(fresh_user):
     rows, _ = database.get_history(fresh_user, htype="parse")
     assert rows[0]["video_url"] == "https://douyin.com/video/7001234"
     assert rows[0]["title"] == "t2"
+
+
+# ===== 6. sub 非整数的 Token 必须 401，不得 500 =====
+
+
+def test_decode_token_rejects_non_integer_sub():
+    """sub 为 "abc" 时 decode_token 必须抛 401，而不是裸 ValueError。
+
+    旧实现只捕获 jwt.InvalidTokenError，int("abc") 的 ValueError 会一路冒泡，
+    FastAPI 兜底成 500 —— 任何人带上一个结构合法但 sub 非数字的 Token
+    都能把接口打成 5xx（且 get_current_user 依赖它，影响所有鉴权路由）。
+    """
+    import jwt
+    from fastapi import HTTPException
+
+    import auth
+
+    for sub in ("abc", "1.5", ""):
+        token = jwt.encode({"sub": sub}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
+        with pytest.raises(HTTPException) as exc_info:
+            auth.decode_token(token)
+        assert exc_info.value.status_code == 401, f"sub={sub!r} 应返回 401"
+        assert exc_info.value.detail == "无效的 Token"
+
+
+def test_decode_token_missing_sub_is_401():
+    """缺 sub 依然按无效 Token 处理（回归保护既有行为）。"""
+    import jwt
+    from fastapi import HTTPException
+
+    import auth
+
+    token = jwt.encode({"email": "a@b.com"}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
+    with pytest.raises(HTTPException) as exc_info:
+        auth.decode_token(token)
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_token_accepts_numeric_sub():
+    """正常 Token（sub 为数字字符串）必须解析为 int。"""
+    import jwt
+
+    import auth
+
+    token = auth.create_token(42, "a@b.com")
+    payload = auth.decode_token(token)
+    assert payload["sub"] == 42
+    assert payload["email"] == "a@b.com"
+
+
+# ===== 7. 字幕 URL 存在但解析出 0 段时，必须按「无字幕」返回 =====
+
+
+def test_subtitle_extractor_empty_segments_is_no_subtitle(monkeypatch):
+    """字幕 URL 能选到、但下载解析后没有任何分段，必须 has_subtitle=False。
+
+    旧实现只看「选到了字幕 URL」就返回 has_subtitle=True + full_text=""，
+    上游 _summarize_stream / _chat_stream 会照常扣减一次免费额度，
+    再拿空字符串去调用 LLM —— 用户既被扣次数又拿不到任何总结。
+    """
+    import summarizer
+
+    extractor = summarizer.SubtitleExtractor()
+    monkeypatch.setattr(
+        extractor,
+        "_get_video_info",
+        lambda url: {
+            "subtitles": {"zh-Hans": [{"ext": "json3", "url": "https://x.test/sub.json3"}]},
+            "automatic_captions": {},
+        },
+    )
+    # yt-dlp 拉取失败 / 字幕文件无正文时返回空列表
+    monkeypatch.setattr(extractor, "_download_and_parse", lambda *a, **kw: [])
+
+    result = extractor.extract("https://example.test/video/1")
+    assert result["has_subtitle"] is False
+    assert result["segments"] == []
+    assert result["full_text"] == ""
+
+
+def test_subtitle_extractor_non_empty_segments_still_ok(monkeypatch):
+    """有分段时正常返回（回归保护，避免上面的防御误伤主流程）。"""
+    import summarizer
+
+    extractor = summarizer.SubtitleExtractor()
+    monkeypatch.setattr(
+        extractor,
+        "_get_video_info",
+        lambda url: {
+            "subtitles": {"zh-Hans": [{"ext": "json3", "url": "https://x.test/sub.json3"}]},
+            "automatic_captions": {},
+        },
+    )
+    monkeypatch.setattr(
+        extractor,
+        "_download_and_parse",
+        lambda *a, **kw: [{"start": 0.0, "end": 1.5, "text": "第一句"}],
+    )
+
+    result = extractor.extract("https://example.test/video/1")
+    assert result["has_subtitle"] is True
+    assert result["full_text"] == "第一句"
+
+
+def test_bilibili_empty_body_is_no_subtitle(monkeypatch):
+    """B 站字幕接口有 subtitles 但 body 全是空内容时，同样按无字幕处理。"""
+    import summarizer
+
+    class _FakeResp:
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    def _fake_get(url, headers=None, timeout=None):
+        if "web-interface/view" in url:
+            return _FakeResp({"data": {"cid": 1, "aid": 2}})
+        if "dm/view" in url:
+            return _FakeResp(
+                {
+                    "data": {
+                        "subtitle": {
+                            "subtitles": [
+                                {"lan": "zh", "subtitle_url": "//x.test/sub.json"}
+                            ]
+                        }
+                    }
+                }
+            )
+        return _FakeResp({"body": [{"content": "   ", "from": 0, "to": 1}]})
+
+    monkeypatch.setattr(summarizer.httpx, "get", _fake_get)
+
+    result = summarizer.SubtitleExtractor()._extract_bilibili(
+        "https://www.bilibili.com/video/BV1xx411c7mD"
+    )
+    assert result["has_subtitle"] is False
+    assert result["full_text"] == ""
