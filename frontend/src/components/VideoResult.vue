@@ -270,9 +270,14 @@ async function openPreview() {
   }
   // yt-dlp 结果不带顶层直链，向现有 /api/direct-url 接口拉取（复用后端能力，零新增依赖）
   if (!props.videoUrl) return
+  // 记录发起请求时的格式：等待期间用户可能切换清晰度，而切换监听在 fetchedUrl 为空时
+  // 不会做任何清理，旧格式的直链一旦落地就会被当作当前预览地址播放。
+  const formatAtRequest = selectedFormat.value
   previewLoading.value = true
   try {
-    const res = await getDirectUrl(props.videoUrl, selectedFormat.value)
+    const res = await getDirectUrl(props.videoUrl, formatAtRequest)
+    // 格式已变：丢弃这条属于旧格式的直链，用户再点预览时会按新格式重新拉取。
+    if (formatAtRequest !== selectedFormat.value) return
     if (res.success && res.data && res.data.direct_url) {
       fetchedUrl.value = res.data.direct_url
       showPreview.value = true

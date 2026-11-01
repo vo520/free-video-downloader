@@ -240,13 +240,20 @@ function onInput(e) {
   }
 }
 
-// 快捷键：Cmd/Ctrl+K 聚焦输入框
+// 快捷键：Cmd/Ctrl+K 聚焦输入框。
+// 焦点已在其它输入控件里（历史搜索框、登录弹窗、批量输入框、AI 问答框）时必须放行：
+// 这些控件大多位于抽屉/弹窗遮罩之后，抢焦点会把用户后续输入丢进看不见的 hero 输入框。
+function isEditableTarget(el) {
+  if (!el || el.isContentEditable) return !!el
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
+}
+
 function onKeyDown(e) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault()
-    inputRef.value?.focus()
-    inputRef.value?.select()
-  }
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return
+  if (isEditableTarget(e.target) && e.target !== inputRef.value) return
+  e.preventDefault()
+  inputRef.value?.focus()
+  inputRef.value?.select()
 }
 
 onMounted(() => {

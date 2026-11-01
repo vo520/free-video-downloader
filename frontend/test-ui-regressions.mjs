@@ -435,6 +435,14 @@ function testSourceContracts() {
     !/nextTick/.test(heroCode),
     'HeroSection 仍依赖 nextTick 设置粘贴提示（微任务早于 input，会被清零）'
   )
+  // 全局 Cmd/Ctrl+K 不能从其它输入控件抢焦点：历史搜索框 / 登录弹窗 / 批量输入框 / AI 问答框
+  // 都在遮罩之后，抢走后用户输入会落到看不见的 hero 输入框里。
+  const heroKeyDown = heroCode.match(/function onKeyDown\(e\)\s*\{([\s\S]*?)\n\}/)
+  assert.ok(heroKeyDown, 'HeroSection 缺少 onKeyDown')
+  assert.ok(
+    /isEditableTarget\(e\.target\)/.test(heroKeyDown[1]),
+    'HeroSection 的 Cmd/Ctrl+K 未放过其它输入控件（会抢走焦点）'
+  )
 
   // VideoSummary 卸载时必须主动复位 loading 并阻止「await 之后继续干活」：
   //  - 不复位 → 宿主 App 的 summarizing 永久为 true，「AI 总结」按钮永久 loading 不可点；
@@ -476,6 +484,14 @@ function testSourceContracts() {
   assert.ok(
     /watch\(selectedFormat,\s*\(\)\s*=>\s*\{[\s\S]*?fetchedUrl\.value\s*=\s*''/.test(resultCode),
     'VideoResult 切换格式后未清空 fetchedUrl（预览仍播放上一格式的直链）'
+  )
+  // 预览请求在途时切换格式：watch 因 fetchedUrl 为空直接跳过，旧格式直链返回后仍会被写入。
+  // 必须记录发起时的格式并在 await 之后比对，否则预览播放的是已取消选中的画质。
+  const openPreview = resultCode.match(/async function openPreview\(\)\s*\{([\s\S]*?)\n\}/)
+  assert.ok(openPreview, 'VideoResult 缺少 openPreview')
+  assert.ok(
+    /formatAtRequest\s*!==\s*selectedFormat\.value/.test(openPreview[1]),
+    'VideoResult 的 openPreview 未在 await 后校验格式是否已切换（会展示旧格式直链）'
   )
 
   // ChatPanel 的 need_login 分支必须写入终止文案并立即渲染：
