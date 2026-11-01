@@ -35,6 +35,7 @@ const HARNESS_HTML = `<!DOCTYPE html>
 const HARNESS_JS = `import { createApp, h } from 'vue'
 import HeroSection from '../src/components/HeroSection.vue'
 import EmptyState from '../src/components/ui/EmptyState.vue'
+import HistoryDrawer from '../src/components/HistoryDrawer.vue'
 import { useToast } from '../src/composables/useToast.js'
 import { useDownloadManager } from '../src/composables/useDownloadManager.js'
 import { normalizeHistoryUrl } from '../src/composables/useHistory.js'
@@ -50,6 +51,7 @@ const Root = {
   render() {
     return h('div', [
       h(HeroSection),
+      h(HistoryDrawer),
       h('div', { id: 'es-host' }, [
         h(EmptyState, { variant: 'info', size: 'sm' }, { default: () => '默认插槽文案' }),
         h(EmptyState, { variant: 'info', size: 'sm' }, { action: () => '动作插槽文案' }),
@@ -206,7 +208,75 @@ async function testNormalizeHistoryUrl(page) {
   assert.equal(result.empty, '', '空值应返回空字符串')
 }
 
-// ---------- 7. 源码契约：修复点不能被改回去 ----------
+// ---------- 7. 历史抽屉：搜索态删除必须同步、重新打开必须看到新记录 ----------
+// 用 route 拦截 /api/history，直接驱动真实 HistoryDrawer 的状态流转：
+//  - 搜索态下列表由服务端搜索结果显示，删除后旧实现只过滤 items → 已删条目仍留在搜索列表里；
+//  - 旧实现只在首次打开（items 为空）时拉取，抽屉关闭期间新增的历史永远看不到。
+const historyFixture = []
+
+function makeHistoryItem(id, title) {
+  return {
+    id,
+    type: 'parse',
+    title,
+    video_url: `https://example.com/v/${id}`,
+    platform: 'youtube',
+    created_at: '2026-01-01T00:00:00+00:00',
+    thumbnail: '',
+    snapshot: { title },
+    extra: null,
+  }
+}
+
+async function installHistoryRoutes(page, fixture) {
+  // 必须按路径前缀精确匹配：用 /\/api\/history/ 正则会连 Vite 提供的源码模块
+  // /src/api/history.js 一起拦截，把 JS 当 JSON 返回 → 模块图加载失败、整页空白。
+  await page.route((url) => url.pathname.startsWith('/api/history'), async (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    if (req.method() === 'DELETE') {
+      const id = Number(url.pathname.split('/').pop())
+      const idx = fixture.findIndex((it) => it.id === id)
+      if (idx >= 0) fixture.splice(idx, 1)
+      return route.fulfill({ json: { success: true } })
+    }
+    if (req.method() === 'POST') {
+      fixture.length = 0
+      return route.fulfill({ json: { success: true, deleted: 0 } })
+    }
+    const kw = (url.searchParams.get('search') || '').toLowerCase()
+    const list = kw ? fixture.filter((it) => it.title.toLowerCase().includes(kw)) : fixture.slice()
+    return route.fulfill({ json: { success: true, data: list, total: list.length } })
+  })
+}
+
+async function testHistoryDrawerSync(page, fixture) {
+  await page.locator('button[title="历史记录"]').click()
+  await page.waitForFunction(() => document.body.innerText.includes('可搜索条目 A'))
+
+  // 输入关键词 → 300ms 防抖后走服务端搜索，列表改由 searchResults 驱动
+  await page.getByLabel('搜索历史记录').fill('可搜索条目 A')
+  await page.waitForTimeout(600)
+
+  await page.locator('[aria-label="删除历史记录：可搜索条目 A"]').click()
+  await page.waitForFunction(
+    () => !document.body.innerText.includes('可搜索条目 A'),
+    null,
+    { timeout: 3000 }
+  )
+
+  // 关闭抽屉后服务端新增一条，重新打开必须能看到（静默刷新首页）
+  await page.locator('button[aria-label="收起历史记录抽屉"]').click()
+  fixture.push(makeHistoryItem(99, '关闭期间新增条目 C'))
+  await page.locator('button[title="历史记录"]').click()
+  await page.waitForFunction(
+    () => document.body.innerText.includes('关闭期间新增条目 C'),
+    null,
+    { timeout: 3000 }
+  )
+}
+
+// ---------- 8. 源码契约：修复点不能被改回去 ----------
 function testSourceContracts() {
   const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8')
   // 注释里会提到 window.open(..., 'noopener') 作为对比说明，先剥掉注释再校验代码
@@ -267,6 +337,12 @@ try {
   const page = await browser.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
+  // 删除历史会弹 confirm：统一接受，否则 Playwright 默认 dismiss，删除逻辑不会执行
+  page.on('dialog', (d) => d.accept())
+  // 预置 token：request.js 无 token 时会先静默创建演示用户，测试里直接跳过这段
+  await page.addInitScript(() => localStorage.setItem('saveany_token', 'regression-token'))
+  historyFixture.push(makeHistoryItem(1, '可搜索条目 A'), makeHistoryItem(2, '其他条目 B'))
+  await installHistoryRoutes(page, historyFixture)
   await page.goto(`${url}.regression-harness/index.html`)
   await page.waitForSelector('#video-url-input')
 
@@ -276,6 +352,7 @@ try {
   await testToastMergeCount(page)
   await testRetryStateGuard(page)
   await testNormalizeHistoryUrl(page)
+  await testHistoryDrawerSync(page, historyFixture)
   testSourceContracts()
 
   assert.deepEqual(errors, [], `页面存在运行时错误：${errors.join(' / ')}`)

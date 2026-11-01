@@ -293,6 +293,8 @@ const searchError = ref('')
 let searchTimer = null
 // 搜索请求序号：只采纳最后一次请求的结果，避免慢请求覆盖新关键词的结果
 let searchSeq = 0
+// 打开抽屉时静默刷新的序号：与搜索一样只采纳最后一次请求，避免慢响应覆盖新数据
+let refreshSeq = 0
 
 // 各分类数量，用于 tab 上的计数徽标，无需额外请求。
 // 搜索态下以服务端命中的结果集为准（searchTotal 是匹配总数，分类计数从命中结果里数）；
@@ -444,6 +446,29 @@ async function loadItems() {
   }
 }
 
+// 打开抽屉时刷新数据：此前只在 items 为空时加载，导致抽屉打开过一次之后，
+// 新产生的历史（例如抽屉关闭期间刚解析完一条）永远不会出现在列表里，
+// 用户只能刷新整页才能看到，误以为记录丢了。
+// 已有数据时静默刷新：不显示 loading、失败保留旧列表；
+// 已「加载更多」翻到第二页以后则跳过，避免把翻出来的内容重置回第一页。
+async function refreshOnOpen() {
+  if (items.value.length === 0) {
+    loadItems()
+    return
+  }
+  if (items.value.length > PAGE_SIZE || search.value.trim()) return
+  const seq = ++refreshSeq
+  try {
+    const { items: list, total: t } = await fetchHistory({ limit: PAGE_SIZE, offset: 0 })
+    // 期间用户已开始搜索或已重新打开（更新的一次刷新），本次结果作废
+    if (seq !== refreshSeq || search.value.trim()) return
+    items.value = list
+    total.value = t ?? list.length
+  } catch {
+    /* 静默失败：保留旧列表，用户仍可正常浏览已加载内容 */
+  }
+}
+
 // 按页追加更多历史（后端 list_history 原生支持 offset/limit/total），避免一次性拉取全部造成首屏卡顿。
 async function loadMore() {
   // 三重守卫：初始加载中 / 加载更多中 / 已加载完。避免初始未加载完成时用户点「加载更多」导致 offset 偏移错乱。
@@ -488,8 +513,14 @@ async function remove(it) {
   deletingId.value = it.id
   try {
     await deleteHistoryItem(it.id)
+    // 搜索态下列表由 searchResults 驱动：只过滤 items 会让已删条目继续留在搜索结果里，
+    // 用户点了删除却「什么都没发生」，还能再次点开已删记录。两处列表必须同步。
     items.value = items.value.filter((x) => x.id !== it.id)
     total.value = Math.max(0, total.value - 1)
+    if (searchResults.value.some((x) => x.id === it.id)) {
+      searchResults.value = searchResults.value.filter((x) => x.id !== it.id)
+      searchTotal.value = Math.max(0, searchTotal.value - 1)
+    }
     // 与 App.vue 删除最近解析的 toast 风格统一：成功反馈而非静默过滤
     showToast('已删除', 'success')
     // 通知 App.vue：若被删条目对应当前正在显示的视频，同步清掉 videoData，
@@ -527,12 +558,12 @@ async function clearAll() {
 
 onMounted(() => { if (open.value) loadItems() })
 // 打开时即拉取（首次挂载时 open=false，由父组件 v-if 控制挂载时机）；切 tab 无需再请求，前端过滤即可。
-// 修复：原写法每次 open 切回 true 都无条件 reload，用户关开抽屉会触发不必要的请求。
-// 加 items.length 守卫：已有数据时不重拉，避免重复请求浪费。
+// 每次打开都走 refreshOnOpen：首次为全量加载，之后为静默刷新，
+// 保证抽屉关闭期间新产生的历史能被看到（旧实现只在 items 为空时加载，列表会一直停留在首次结果）。
 watch(open, (v) => {
   if (!v) return
   expandedId.value = null
-  if (items.value.length === 0) loadItems()
+  refreshOnOpen()
   nextTick(() => searchInput.value?.focus())
 })
 
@@ -548,6 +579,15 @@ watch(() => props.removedIds, (ids) => {
   const fresh = ids.filter((id) => !removedIdSet.has(id))
   fresh.forEach((id) => removedIdSet.add(id))
   items.value = items.value.filter((x) => !set.has(x.id))
+  // 搜索态下列表由服务端搜索结果驱动，同样要移出宿主删除的条目，
+  // 否则搜索结果里仍留着已删记录，点进去还能看到被删内容。
+  if (searchResults.value.length) {
+    const hit = searchResults.value.filter((x) => set.has(x.id)).length
+    if (hit) {
+      searchResults.value = searchResults.value.filter((x) => !set.has(x.id))
+      searchTotal.value = Math.max(0, searchTotal.value - hit)
+    }
+  }
   total.value = Math.max(0, total.value - fresh.length)
 })
 
