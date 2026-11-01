@@ -49,11 +49,15 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
             </svg>
+            <!-- 不能用 type="url"：原生校验会在 submit 之前拦下「多个链接」或「带说明文字的分享文案」，
+                 submit 事件根本不派发，onSubmit 里的 splitUrls 拆分与批量跳转永远执行不到，
+                 用户点「解析视频」只会看到一个浏览器校验气泡。改用 text + inputmode=url 保留移动端 URL 键盘。 -->
             <input
               id="video-url-input"
               ref="inputRef"
               v-model="url"
-              type="url"
+              type="text"
+              inputmode="url"
               :placeholder="placeholder"
               class="w-full h-13 sm:h-14 pl-12 pr-14 sm:pr-4 rounded-full sm:rounded-r-none border border-transparent bg-white/80 text-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/25 focus:bg-white transition-all"
               :disabled="loading"
@@ -93,7 +97,7 @@
           <BaseButton
             v-for="example in examples"
             :key="example.label"
-            @click="url = example.url"
+            @click="pickExample(example.url)"
             variant="outline"
             class="px-3! py-1! rounded-full! text-text-muted!"
           >
@@ -174,6 +178,15 @@ function normalizeUrl(raw) {
     u = u.replace('bilibili.com', 'www.bilibili.com')
   }
   return u
+}
+
+// 点击示例按钮是程序化赋值，不会触发 input 事件，必须手动清掉上一次的多链接提示；
+// 否则输入框已变成单条链接，却仍显示「检测到 N 个链接」，点进去还会把旧的粘贴文本
+// 塞给批量面板，与实际输入内容不一致。
+function pickExample(value) {
+  url.value = value
+  pasteHint.value = 0
+  pastedText.value = ''
 }
 
 function onSubmit() {

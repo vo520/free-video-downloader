@@ -254,9 +254,11 @@
         class="md:hidden border-t border-border bg-white/95 backdrop-blur-xl shadow-lg"
       >
         <div class="max-w-7xl mx-auto px-4 py-3 space-y-1">
-          <!-- 最近解析 -->
+          <!-- 最近解析：只切换内嵌列表，不能顺手把 mobileOpen 置 false。
+               面板由 v-if="mobileOpen" 控制，一旦关闭会立刻卸载，
+               用户永远看不到刚展开的历史列表（等于该入口点了没反应）。 -->
           <button
-            @click="mobileOpen = false; mobileHistoryOpen = !mobileHistoryOpen"
+            @click="mobileHistoryOpen = !mobileHistoryOpen"
             class="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm text-text-secondary hover:bg-surface-muted transition-colors cursor-pointer"
             :aria-expanded="mobileHistoryOpen"
           >

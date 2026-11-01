@@ -33,6 +33,7 @@ const HARNESS_HTML = `<!DOCTYPE html>
 `
 
 const HARNESS_JS = `import { createApp, h } from 'vue'
+import AppHeader from '../src/components/AppHeader.vue'
 import HeroSection from '../src/components/HeroSection.vue'
 import EmptyState from '../src/components/ui/EmptyState.vue'
 import HistoryDrawer from '../src/components/HistoryDrawer.vue'
@@ -50,7 +51,16 @@ const Root = {
   },
   render() {
     return h('div', [
-      h(HeroSection),
+      // 顶栏：验证移动端「最近解析」能真正展开历史列表（历史数据直接从 props 注入）
+      h(AppHeader, {
+        history: [
+          { id: 7, title: '移动端历史条目', url: 'https://example.com/v/7', platform: 'youtube', ts: Date.now() },
+        ],
+      }),
+      h(HeroSection, {
+        onParse: (u) => { window.__lastParse = u },
+        onOpenBatch: (t) => { window.__lastBatch = t },
+      }),
       h(HistoryDrawer),
       h('div', { id: 'es-host' }, [
         h(EmptyState, { variant: 'info', size: 'sm' }, { default: () => '默认插槽文案' }),
@@ -114,6 +124,73 @@ async function testPasteHint(page) {
     0,
     '单条链接时批量入口未隐藏'
   )
+
+  // 多链接 → 点示例按钮（程序化赋值，不触发 input）：过期的批量入口必须一起消失，
+  // 否则输入框里已是单条链接，点提示却会把旧的粘贴文本送进批量面板。
+  await input.fill('https://a.example.com/1 https://b.example.com/2')
+  await page.waitForTimeout(500)
+  await page.getByRole('button', { name: 'YouTube' }).click()
+  await page.waitForTimeout(500)
+  assert.equal(
+    await page.getByText(/检测到\s*\d+\s*个链接/).count(),
+    0,
+    '点击示例按钮后仍残留过期的批量入口'
+  )
+}
+
+// ---------- 2.1 主按钮提交多链接必须进入批量解析 ----------
+// 输入框若保留 type="url"，浏览器原生校验会在 submit 之前拦下「多个链接 / 分享文案」，
+// onSubmit 里的 splitUrls 分支永远走不到，用户点「解析视频」只会看到校验气泡。
+async function testSubmitMultipleUrls(page) {
+  await page.evaluate(() => { window.__lastParse = null; window.__lastBatch = null })
+  const input = page.locator('#video-url-input')
+  await input.fill('https://a.example.com/1 https://b.example.com/2')
+  await page.locator('form button[type="submit"]').first().click()
+  await page.waitForTimeout(200)
+
+  const submitted = await page.evaluate(() => ({ batch: window.__lastBatch, parse: window.__lastParse }))
+  assert.ok(
+    submitted.batch && submitted.batch.includes('https://a.example.com/1'),
+    '多链接点「解析视频」未进入批量解析（提交被原生校验拦下）'
+  )
+  assert.equal(submitted.parse, null, '多链接不应被当成单条链接直接解析')
+
+  // 单条链接仍应正常触发单条解析
+  await page.evaluate(() => { window.__lastParse = null; window.__lastBatch = null })
+  await input.fill('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+  await page.locator('form button[type="submit"]').first().click()
+  await page.waitForTimeout(200)
+  const single = await page.evaluate(() => window.__lastParse)
+  assert.ok(
+    typeof single === 'string' && single.includes('dQw4w9WgXcQ'),
+    '单条链接未触发单条解析'
+  )
+}
+
+// ---------- 2.2 移动端「最近解析」必须展开列表而不是关掉整个面板 ----------
+async function testMobileHeaderHistory(page) {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(200)
+
+  await page.locator('button[aria-label="打开菜单"]').click()
+  const menu = page.locator('#mobile-menu')
+  await menu.waitFor({ state: 'visible' })
+
+  await menu.getByRole('button', { name: /最近解析/ }).click()
+  await page.waitForTimeout(150)
+
+  assert.ok(
+    await menu.isVisible(),
+    '移动端点击「最近解析」把整个菜单面板关掉了，历史列表永远看不到'
+  )
+  assert.ok(
+    await page.getByText('移动端历史条目').isVisible(),
+    '移动端「最近解析」未展开历史列表'
+  )
+
+  // 恢复桌面视口，避免影响后续依赖桌面布局的用例
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.waitForTimeout(150)
 }
 
 // ---------- 3. window.open 带 noopener 恒返回 null（误报根因） ----------
@@ -348,6 +425,8 @@ try {
 
   await testEmptyStateDefaultSlot(page)
   await testPasteHint(page)
+  await testSubmitMultipleUrls(page)
+  await testMobileHeaderHistory(page)
   await testWindowOpenSemantics(page)
   await testToastMergeCount(page)
   await testRetryStateGuard(page)
