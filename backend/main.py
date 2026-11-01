@@ -412,7 +412,16 @@ async def download_video(req: DownloadRequest, user: dict | None = Depends(get_o
         if is_douyin_url(url):
             # 抖音下载同样可能阻塞，加超时降级。根据 format_id 选择视频/仅音频模式
             # （复用既有 DouyinParser.download，不新增接口）
-            douyin_mode = "audio" if "audio" in req.format_id else "video"
+            # 仅音频必须按「纯音频选择器」精确判定，不能只看 format_id 里是否含 "audio" 子串：
+            # 前端默认格式 "bestvideo+bestaudio/best" 同样含该子串，会被误判成仅音频，
+            # 于是用户点「下载视频」拿到的是一个 mp3。历史记录重新下载正是这条路径
+            # （旧记录没有 extra.format_id，前端 enqueue 会回退到该默认选择器）。
+            fmt_lower = (req.format_id or "").strip().lower()
+            douyin_mode = (
+                "audio"
+                if fmt_lower in ("audio", "audio_only", "bestaudio", "douyin_audio")
+                else "video"
+            )
             try:
                 result = await asyncio.wait_for(
                     loop.run_in_executor(None, douyin_parser.download, url, douyin_mode),
