@@ -201,8 +201,9 @@ def _dep_limit_direct(request: "Request") -> None:
     _limit(request, _direct_limiter)
 
 
-# ---------- 缩略图代理 SSRF 防护 ----------
+# ---------- SSRF 防护 ----------
 # 仅允许 http/https；解析主机对应所有 IP，任一命中保留/私有网段即拒绝（缓解 DNS 重绑定）。
+# 本黑名单由缩略图代理与解析/下载/直链入口共用，保证两者判定口径一致。
 _BLOCKED_NETS = [
     ipaddress.ip_network(n)
     for n in (
@@ -528,8 +529,13 @@ def _resolve_safe_ip(url: str):
 def _validate_public_url(raw_url: str) -> str:
     """校验用户输入的解析/下载/直链 URL：仅允许公网 http/https，拒绝指向内网/环回/
     链路本地/保留/多播地址（防 SSRF 与 file:// 等本地文件读取）。
-    返回规范化后的 URL；不合法抛 400。用标准库地址分类而非 is_global，避免误伤正常
-    公网 CDN（如 100.64.0.0/10 共享地址）。"""
+    返回规范化后的 URL；不合法抛 400。
+
+    判定口径与缩略图代理共用 _BLOCKED_NETS：标准库的 is_private / is_global 都**不**
+    覆盖 100.64.0.0/10（共享地址段，两者皆为 False，见 Python 3.13 官方文档），
+    若只依赖标准库分类，该段会被放行 —— 而阿里云元数据服务 100.100.100.200 正落在
+    该段内，攻击者可用 /api/parse 探测云元数据。原先注释称该段是"正常公网 CDN 共享
+    地址"属误判：它是运营商级 NAT 段，并非公网可路由地址。"""
     url = (raw_url or "").strip()
     parsed = urlparse(url)
     if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
@@ -560,6 +566,9 @@ def _validate_public_url(raw_url: str) -> str:
             or ip.is_link_local
             or ip.is_reserved
             or ip.is_multicast
+            # 共享地址段（100.64.0.0/10）等标准库分类覆盖不到的目标，
+            # 与缩略图代理走同一份黑名单，避免两个入口判定不一致
+            or any(ip in net for net in _BLOCKED_NETS)
         ):
             raise HTTPException(
                 status_code=400,

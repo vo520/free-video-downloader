@@ -441,8 +441,17 @@ class VideoCacheDB:
         if hot_only:
             clauses.append("is_hot=1")
         if search:
-            clauses.append("(title LIKE ? OR video_url LIKE ? OR uploader LIKE ?)")
-            like = f"%{search}%"
+            # 转义 LIKE 通配符：否则搜 "%" 会匹配全部记录、"_" 会变成单字符通配。
+            # 与 database.get_history 的搜索口径保持一致（同一项目内两处搜索行为不同，
+            # 会让管理员在缓存后台与历史抽屉里搜同一个关键词得到不同结果）。
+            escaped = (
+                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            like = f"%{escaped}%"
+            clauses.append(
+                "(title LIKE ? ESCAPE '\\' OR video_url LIKE ? ESCAPE '\\' "
+                "OR uploader LIKE ? ESCAPE '\\')"
+            )
             params.extend([like, like, like])
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, params

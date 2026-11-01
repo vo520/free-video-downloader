@@ -362,8 +362,16 @@ class DouyinParser:
         video_info = item_info.get("video", {})
         play_urls = video_info.get("play_addr", {}).get("url_list", [])
         cover_urls = video_info.get("cover", {}).get("url_list", [])
-        duration = video_info.get("duration", 0)
-        duration_sec = duration // 1000 if duration > 1000 else duration
+        duration = video_info.get("duration", 0) or 0
+        # 抖音接口的 video.duration 单位是毫秒（官方文档：视频时长，单位：毫秒），
+        # 需换算成秒以与 yt-dlp 的 duration 口径一致。
+        # 原判定用 `> 1000` 判毫秒，恰好漏掉 1000 本身：1 秒的短视频
+        # （抖音上非常常见）会落到 else 分支被当成 1000 秒 → 时长显示成 16:40。
+        # 该值还会写入 video_cache.duration 并参与缓存规则的时长匹配，
+        # 算错会让短视频命中错误的 TTL 档位。
+        # 阈值取 >= 1000 而非无条件整除：万一上游改回秒单位，无条件整除会让
+        # 所有视频时长归零，而保留 else 兜底最坏只是把 1000~ 的值算错。
+        duration_sec = duration // 1000 if duration >= 1000 else duration
 
         formats = []
         if play_urls:
