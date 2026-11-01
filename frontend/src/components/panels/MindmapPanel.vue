@@ -164,26 +164,35 @@ import('markmap-view'),
   )
 
   // ===== 全屏切换 =====
+  // Fullscreen API 返回 Promise，reject 不会被同步 try/catch 捕获：
+  // iframe 缺少 allow="fullscreen" 或被 permission-policy 拒绝时，失败会冒泡到 main.js 的
+  // unhandledrejection 全局兜底，弹通用「请求异常」错误，而预期的友好提示永远不会出现。
+  // 这里显式接住 Promise 的 reject；部分 WebKit 实现返回 void，需先判断是否为 Promise。
+  function catchFullscreenPromise(result, onFail) {
+    if (result && typeof result.catch === 'function') result.catch(onFail)
+  }
+
   function toggleFullscreen() {
     if (!mindmapContainer.value) return
+    const onRequestFail = () =>
+      showToast('当前环境无法全屏，请检查浏览器权限', 'info')
     if (!isFullscreen.value) {
-      // 修复：原写法 silent fail（iframe 跨域 / permission-policy 拒绝时无反馈）。
-      // 改为 try/catch + toast 提示，让用户知道"当前环境不支持全屏"。
       try {
         if (mindmapContainer.value.requestFullscreen) {
-          mindmapContainer.value.requestFullscreen()
+          catchFullscreenPromise(mindmapContainer.value.requestFullscreen(), onRequestFail)
         } else if (mindmapContainer.value.webkitRequestFullscreen) {
-          mindmapContainer.value.webkitRequestFullscreen()
+          catchFullscreenPromise(mindmapContainer.value.webkitRequestFullscreen(), onRequestFail)
         } else {
           showToast('当前浏览器不支持全屏', 'info')
         }
       } catch (e) {
-        showToast('当前环境无法全屏，请检查浏览器权限', 'info')
+        onRequestFail()
       }
     } else {
       try {
-        if (document.exitFullscreen) document.exitFullscreen()
-        else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
+        // 退出全屏失败通常无影响，静默忽略
+        if (document.exitFullscreen) catchFullscreenPromise(document.exitFullscreen(), () => {})
+        else if (document.webkitExitFullscreen) catchFullscreenPromise(document.webkitExitFullscreen(), () => {})
       } catch (e) {
         /* 退出全屏失败通常无影响 */
       }

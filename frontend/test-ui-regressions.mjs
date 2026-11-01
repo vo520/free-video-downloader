@@ -424,6 +424,24 @@ function testSourceContracts() {
     destroyIdx < createIdx,
     'MindmapPanel 未在重建前销毁旧 markmap 实例（旧实例的监听器会一直残留）'
   )
+  // 全屏 API 返回 Promise，同步 try/catch 抓不到 reject：失败会冒泡到 main.js 的
+  // unhandledrejection，弹通用「请求异常」错误，而预期的友好文案永远不会出现。
+  // 注意：MindmapPanel 的 script 内容有缩进，不能用 `\n}` 定位函数结尾，按相邻函数切片。
+  const fsStart = mindmapCode.indexOf('function toggleFullscreen()')
+  const fsEnd = mindmapCode.indexOf('function onFullscreenChange(')
+  assert.ok(
+    fsStart !== -1 && fsEnd > fsStart,
+    'MindmapPanel 缺少 toggleFullscreen'
+  )
+  const fsBody = mindmapCode.slice(fsStart, fsEnd)
+  assert.ok(
+    /catchFullscreenPromise\([^)]*requestFullscreen\(\)/.test(fsBody),
+    'MindmapPanel 未接住 requestFullscreen() 的 Promise reject（全屏失败会弹通用「请求异常」）'
+  )
+  assert.ok(
+    /catchFullscreenPromise\([^)]*exitFullscreen\(\)/.test(fsBody),
+    'MindmapPanel 未接住 exitFullscreen() 的 Promise reject（退出失败会弹通用「请求异常」）'
+  )
 
   const hero = read('components/HeroSection.vue')
   const heroCode = stripComments(hero)
