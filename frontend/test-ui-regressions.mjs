@@ -505,6 +505,74 @@ async function testHistoryDrawerPagination(browser, url) {
   assert.deepEqual(errors, [], `分页用例存在运行时错误：${errors.join(' / ')}`)
 }
 
+// ---------- 7.4 下载超时必须覆盖响应正文读取 ----------
+// 旧实现 fetch 一 resolve 就 clearTimeout：若服务端发完响应头后卡住不发正文
+// （连接半死 / 网关挂起），reader.read() 永不 resolve，任务会永久停在 downloading，
+// 既没有进度也不会超时，用户只能手动取消。
+async function testDownloadTimeoutCoversBody(browser, url) {
+  const page = await browser.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.addInitScript(() => {
+    localStorage.setItem('saveany_token', 'regression-token')
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = (input, init = {}) => {
+      const target = typeof input === 'string' ? input : input?.url || ''
+      if (!target.includes('/api/download')) return originalFetch(input, init)
+      // 只返回响应头，正文用永不结束的流模拟「服务端卡住」；
+      // 真实浏览器里 abort 会让响应体流报错，这里手动把 abort 转发到流上。
+      const stream = new ReadableStream({
+        start(controller) {
+          init.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('Aborted', 'AbortError'))
+          }, { once: true })
+        },
+      })
+      return Promise.resolve(
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      )
+    }
+  })
+  await page.goto(`${url}.regression-harness/index.html`)
+  await page.waitForFunction(() => !!window.__dm)
+
+  // 页面加载后再接管时钟：只加速下载管理器内部的 35 分钟超时，
+  // 不影响 harness 挂载阶段已用真实定时器排好的任务。
+  await page.clock.install()
+  const id = await page.evaluate(() => {
+    window.__dm.state.tasks.length = 0
+    return window.__dm.enqueue('https://stall.example.com/video', '').id
+  })
+  // 让 fetch 的微任务链推进到 reader.read()（时钟已冻结，不能靠 sleep 等待）
+  await page.evaluate(() => Promise.resolve())
+  const statusBefore = await page.evaluate(
+    (taskId) => window.__dm.state.tasks.find((t) => t.id === taskId)?.status,
+    id
+  )
+  assert.equal(statusBefore, 'downloading', '前置条件不成立：任务未进入 downloading')
+
+  await page.clock.fastForward(35 * 60 * 1000)
+  const after = await page.evaluate((taskId) => {
+    const t = window.__dm.state.tasks.find((x) => x.id === taskId)
+    return { status: t?.status, error: t?.error }
+  }, id)
+  assert.equal(
+    after.status,
+    'error',
+    '响应头已到、正文卡死时未触发超时，任务永久停在 downloading'
+  )
+  assert.ok(
+    String(after.error).includes('下载超时'),
+    `超时提示缺失（实际错误：${JSON.stringify(after.error)}）`
+  )
+
+  await page.close()
+  assert.deepEqual(errors, [], `下载超时用例存在运行时错误：${errors.join(' / ')}`)
+}
+
 // ---------- 8. 源码契约：修复点不能被改回去 ----------
 function testSourceContracts() {
   const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8')
@@ -739,6 +807,7 @@ try {
   await testHistoryDrawerSearchExtras(page)
   await testOrderCreatedAtTimezone(page)
   await testHistoryDrawerPagination(browser, url)
+  await testDownloadTimeoutCoversBody(browser, url)
   testSourceContracts()
 
   assert.deepEqual(errors, [], `页面存在运行时错误：${errors.join(' / ')}`)

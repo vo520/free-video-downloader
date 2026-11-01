@@ -133,7 +133,9 @@ async function start(task) {
       body: JSON.stringify({ url: task.url, format_id: task.formatId }),
       signal: timeoutController.signal,
     })
-    clearTimeout(timeoutId)
+    // 不能在这里清定时器：fetch resolve 只代表响应头已到，正文还在下面流式读取。
+    // 服务端（或中间网关）发完响应头就卡住时，reader.read() 永不 resolve，
+    // 提前清掉超时会让任务永久停在 downloading；统一交给 finally 清理。
     if (!response.ok) {
       // 构造与 axios 拦截器形态一致的 Error 对象，让 getApiError 走标准分支
       // （避免后端 detail 为对象时被 toString 成 "[object Object]"）
