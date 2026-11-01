@@ -402,10 +402,13 @@ function parsedExtra(it) {
 
 // 列表频繁重渲染（搜索/切 tab/展开总结），每项模板调用 parsedExtra 2 次 → 2N 次 JSON.parse。
 // 一次性按 id 预解析到 Map：N 项 × 2 次 → 1 次，且 summary/mindmap 的 marked + DOMPurify
-// 重操作也只在 items 变化时跑一次，不再每帧重渲染。
+// 重操作也只在数据源变化时跑一次，不再每帧重渲染。
+// 数据源必须同时覆盖 items 与 searchResults：搜索命中的旧记录可能不在已加载页里，
+// 只遍历 items 会让它展开总结时是空白、下载记录也取不到 extra.format_id。
+// 两处可能含同一 id，Map 天然按 id 去重（后写入的覆盖，内容一致）。
 const parsedExtrasById = computed(() => {
   const map = new Map()
-  for (const it of items.value) {
+  for (const it of [...items.value, ...searchResults.value]) {
     if (!it.extra) continue
     try {
       map.set(it.id, typeof it.extra === 'string' ? JSON.parse(it.extra) : it.extra)

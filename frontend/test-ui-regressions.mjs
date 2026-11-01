@@ -305,6 +305,22 @@ function makeHistoryItem(id, title) {
   }
 }
 
+// 总结记录：onlyViaSearch 用于模拟「不在首屏已加载页里、只有搜索才命中」的旧历史
+function makeSummaryItem(id, title) {
+  return {
+    id,
+    type: 'summary',
+    title,
+    video_url: `https://example.com/v/${id}`,
+    platform: 'youtube',
+    created_at: '2026-01-01T00:00:00+00:00',
+    thumbnail: '',
+    snapshot: null,
+    extra: JSON.stringify({ summary: '## 历史总结正文\n\n- 要点一' }),
+    onlyViaSearch: true,
+  }
+}
+
 async function installHistoryRoutes(page, fixture) {
   // 必须按路径前缀精确匹配：用 /\/api\/history/ 正则会连 Vite 提供的源码模块
   // /src/api/history.js 一起拦截，把 JS 当 JSON 返回 → 模块图加载失败、整页空白。
@@ -322,7 +338,10 @@ async function installHistoryRoutes(page, fixture) {
       return route.fulfill({ json: { success: true, deleted: 0 } })
     }
     const kw = (url.searchParams.get('search') || '').toLowerCase()
-    const list = kw ? fixture.filter((it) => it.title.toLowerCase().includes(kw)) : fixture.slice()
+    // 非搜索态列表模拟分页：onlyViaSearch 的记录不在已加载页里，只有搜索才能命中
+    const list = kw
+      ? fixture.filter((it) => it.title.toLowerCase().includes(kw))
+      : fixture.filter((it) => !it.onlyViaSearch)
     return route.fulfill({ json: { success: true, data: list, total: list.length } })
   })
 }
@@ -351,6 +370,27 @@ async function testHistoryDrawerSync(page, fixture) {
     null,
     { timeout: 3000 }
   )
+}
+
+// ---------- 7.1 历史抽屉：搜索命中的旧记录也必须能展开回看总结 ----------
+// 旧实现只按 items（首屏已加载页）预解析 extra，搜索命中但不在该页里的记录
+// getExtra 恒为空 → 展开只出现一个空白的 border-top 区块，总结永远看不到。
+async function testHistoryDrawerSearchExtras(page) {
+  await page.getByLabel('搜索历史记录').fill('旧总结条目 D')
+  await page.waitForTimeout(600)
+  await page.getByText('旧总结条目 D', { exact: true }).click()
+  await page.waitForFunction(
+    () => document.body.innerText.includes('历史总结正文'),
+    null,
+    { timeout: 3000 }
+  )
+  assert.ok(
+    (await page.getByText('要点一').count()) > 0,
+    '搜索结果中的总结记录展开后未渲染 Markdown 正文（extra 未被解析）'
+  )
+  // 清空关键词，避免影响后续用例
+  await page.getByLabel('搜索历史记录').fill('')
+  await page.waitForTimeout(400)
 }
 
 // ---------- 8. 源码契约：修复点不能被改回去 ----------
@@ -481,7 +521,11 @@ try {
   page.on('dialog', (d) => d.accept())
   // 预置 token：request.js 无 token 时会先静默创建演示用户，测试里直接跳过这段
   await page.addInitScript(() => localStorage.setItem('saveany_token', 'regression-token'))
-  historyFixture.push(makeHistoryItem(1, '可搜索条目 A'), makeHistoryItem(2, '其他条目 B'))
+  historyFixture.push(
+    makeHistoryItem(1, '可搜索条目 A'),
+    makeHistoryItem(2, '其他条目 B'),
+    makeSummaryItem(3, '旧总结条目 D')
+  )
   await installHistoryRoutes(page, historyFixture)
   await page.goto(`${url}.regression-harness/index.html`)
   await page.waitForSelector('#video-url-input')
@@ -495,6 +539,7 @@ try {
   await testRetryStateGuard(page)
   await testNormalizeHistoryUrl(page)
   await testHistoryDrawerSync(page, historyFixture)
+  await testHistoryDrawerSearchExtras(page)
   testSourceContracts()
 
   assert.deepEqual(errors, [], `页面存在运行时错误：${errors.join(' / ')}`)
