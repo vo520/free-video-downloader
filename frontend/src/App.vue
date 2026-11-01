@@ -252,7 +252,7 @@
     <AuthModal
       :visible="authModalVisible"
       :initialMode="authModalMode"
-      @close="authModalVisible = false"
+      @close="closeAuthModal"
       @success="onAuthSuccess"
     />
 
@@ -353,7 +353,7 @@ const {
   addLocalHistory, clearLocal,
 } = useHistory({ showToast, isAuthed: isAuthedUser })
 clearLocalHistory = clearLocal
-const { authModalVisible, authModalMode, showAuthModal } = useAuthModal()
+const { authModalVisible, authModalMode, showAuthModal, closeAuthModal } = useAuthModal()
 const {
   loading, videoData, currentUrl, summaryParams, summarizing,
   handleSummarize, handleSummarizeLoadingChange,

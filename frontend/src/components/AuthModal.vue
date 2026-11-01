@@ -18,7 +18,6 @@
           <label for="auth-email" class="block text-sm font-medium text-text-primary mb-1.5">邮箱地址</label>
           <input
             id="auth-email"
-            ref="emailInput"
             v-model="email"
             type="email"
             required
@@ -108,7 +107,6 @@ const password = ref('')
 const showPassword = ref(false)
 const submitting = ref(false)
 const error = ref('')
-const emailInput = ref(null)
 
 // AuthModal 常驻挂载（App.vue 未用 v-if），initialMode 由父组件在每次 open 前更新。
 // 若不监听 prop 变化，isLogin 只在首次初始化一次，导致点「免费注册」仍显示登录表单。

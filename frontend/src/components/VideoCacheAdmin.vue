@@ -389,15 +389,25 @@
                     </span>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-right">
-                    <BaseButton
-                      variant="danger"
-                      size="xs"
-                      shape="square"
-                      :disabled="pendingActions.has(rule.rule_name)"
-                      @click="deleteRule(rule)"
-                    >
-                      删除
-                    </BaseButton>
+                    <div class="flex items-center justify-end gap-2">
+                      <BaseButton
+                        variant="outline"
+                        size="xs"
+                        shape="square"
+                        @click="openRuleForm(rule)"
+                      >
+                        编辑
+                      </BaseButton>
+                      <BaseButton
+                        variant="danger"
+                        size="xs"
+                        shape="square"
+                        :disabled="pendingActions.has(rule.rule_name)"
+                        @click="deleteRule(rule)"
+                      >
+                        删除
+                      </BaseButton>
+                    </div>
                   </td>
                 </tr>
               </template>
@@ -543,7 +553,7 @@
     <!-- 新增/编辑缓存规则 -->
     <BaseModal
       v-model="showRuleModal"
-      :title="ruleForm.rule_name ? '编辑缓存规则' : '新增缓存规则'"
+      :title="editingRuleName ? '编辑缓存规则' : '新增缓存规则'"
       subtitle="留空的匹配条件表示不限；时长填 0 表示该侧无边界"
       max-width="2xl"
     >
@@ -555,9 +565,13 @@
             v-model="ruleForm.rule_name"
             type="text"
             required
+            :readonly="!!editingRuleName"
             placeholder="例如 short_video"
-            class="w-full h-10 px-3 border border-border rounded-xl bg-white text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            class="w-full h-10 px-3 border border-border rounded-xl bg-white text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all read-only:bg-surface-muted"
           />
+          <p class="mt-1 text-xs text-text-muted">
+            {{ editingRuleName ? '规则名是唯一标识，保存时按该名称覆盖更新' : '规则名是唯一标识，保存后不可修改' }}
+          </p>
         </div>
         <div>
           <label class="block text-sm font-medium text-text-primary mb-1" for="rule-platform">平台</label>
@@ -639,6 +653,16 @@
             placeholder="可选，用于在列表里说明这条规则的用途"
             class="w-full h-10 px-3 border border-border rounded-xl bg-white text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
           />
+        </div>
+        <div class="sm:col-span-2">
+          <label class="flex items-center gap-2 text-sm text-text-primary">
+            <input
+              v-model="ruleForm.is_active"
+              type="checkbox"
+              class="w-4 h-4 text-primary border-border rounded focus:ring-primary/20"
+            />
+            启用该规则（停用后不参与 TTL 匹配）
+          </label>
         </div>
       </form>
       <template #footer>
@@ -788,6 +812,7 @@ async function loadRules() {
     const response = await request.get('/video-cache/rules', { __silent: true })
     if (response.data.success) {
       rules.value = response.data.data || []
+      rulesLoaded.value = true  // 只有真正取到数据才标记为已加载
     } else {
       rulesError.value = getApiError({ response }, '加载失败', '未知错误')
     }
@@ -795,11 +820,15 @@ async function loadRules() {
     rulesError.value = getApiError(error, '加载缓存规则失败')
   } finally {
     rulesLoading.value = false
-    rulesLoaded.value = true
   }
 }
 
+// 弹窗标题用 editingRuleName 判定新增/编辑，不能用 ruleForm.rule_name：
+// 它同时是表单输入框的 v-model，用户一敲字标题就会从"新增"翻成"编辑"。
+const editingRuleName = ref('')
+
 function openRuleForm(rule = null) {
+  editingRuleName.value = rule?.rule_name || ''
   ruleForm.value = rule
     ? {
         rule_name: rule.rule_name || '',
@@ -823,6 +852,15 @@ async function saveRule() {
   if (!form.rule_name.trim()) {
     showToast('请填写规则名', 'error')
     return
+  }
+  // 新增时若规则名已存在，后端是按名称 upsert（会静默覆盖已有规则），
+  // 用户以为"新增了一条"实际改掉了旧规则，这里先拦住并提示去编辑。
+  if (!editingRuleName.value) {
+    const duplicated = rules.value.some((r) => r.rule_name === form.rule_name.trim())
+    if (duplicated) {
+      showToast('该规则名已存在，请直接编辑', 'error')
+      return
+    }
   }
   savingRule.value = true
   try {
@@ -869,6 +907,7 @@ async function loadLogs() {
     const response = await request.get('/video-cache/logs', { params: { limit: 100 }, __silent: true })
     if (response.data.success) {
       logs.value = response.data.data || []
+      logsLoaded.value = true  // 只有真正取到数据才标记为已加载
     } else {
       logsError.value = getApiError({ response }, '加载失败', '未知错误')
     }
@@ -876,7 +915,6 @@ async function loadLogs() {
     logsError.value = getApiError(error, '加载解析日志失败')
   } finally {
     logsLoading.value = false
-    logsLoaded.value = true
   }
 }
 
@@ -893,7 +931,13 @@ const logAvgDuration = computed(() => {
   return Math.round(timed.reduce((sum, l) => sum + Number(l.duration_ms), 0) / timed.length)
 })
 
+// 请求序列号：只有最后一次发起的请求结果才允许写入列表。
+// 快速切换筛选条件时，先发的请求可能后到，旧响应会覆盖新结果，
+// 造成列表与筛选条件/总数互相矛盾。
+let videosRequestId = 0
+
 async function loadVideos() {
+  const requestId = ++videosRequestId
   loading.value = true
   errorMsg.value = ''
   try {
@@ -916,6 +960,7 @@ async function loadVideos() {
     }
     
     const response = await request.get('/video-cache/videos', { params, __silent: true })
+    if (requestId !== videosRequestId) return  // 已有更新的请求发出，丢弃本次响应
     if (response.data.success) {
       videos.value = response.data.data
       total.value = response.data.total
@@ -923,13 +968,14 @@ async function loadVideos() {
       errorMsg.value = getApiError({ response }, '加载失败', '未知错误')
     }
   } catch (error) {
+    if (requestId !== videosRequestId) return
     if (isForbidden(error)) {
       forbidden.value = true
       return
     }
     errorMsg.value = getApiError(error, '加载失败')
   } finally {
-    loading.value = false
+    if (requestId === videosRequestId) loading.value = false
   }
 }
 
@@ -968,16 +1014,26 @@ function downloadVideo(video) {
     return
   }
   // 修复：原 `_blank` 在老浏览器（IE / 旧 Safari）下会暴露 window.opener 引用，可能被目标页面反向操控。
-  // 显式 noopener,noreferrer 是现代安全标准。
-  const win = window.open(video.download_url, '_blank', 'noopener,noreferrer')
-  // window.open 返回 null = 弹窗被浏览器拦截。原实现静默失败，用户点了没反应也不知道原因。
+  // 注意不能直接用 window.open(url, '_blank', 'noopener,noreferrer')：
+  // 按规范带了 noopener 时 window.open 恒返回 null（无论是否被拦截），
+  // 会导致每次下载都误判为"弹窗被拦截"并覆盖用户剪贴板。
+  // 改为不传 features 打开，再手动把 opener 置空达到同等防护效果。
+  const win = window.open(video.download_url, '_blank')
   if (!win) {
+    // window.open 返回 null = 弹窗被浏览器拦截。原实现静默失败，用户点了没反应也不知道原因。
     copyText(video.download_url).then((ok) => {
       showToast(
         ok ? '新窗口被拦截，下载链接已复制到剪贴板' : '新窗口被拦截，请手动复制下载链接',
         ok ? 'warning' : 'error'
       )
     })
+    return
+  }
+  // 断开 opener 引用，防止目标页面反向操控本页（等价于 noopener）
+  try {
+    win.opener = null
+  } catch (e) {
+    /* 跨域时设置 opener 可能失败，忽略 */
   }
 }
 

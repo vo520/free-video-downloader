@@ -39,6 +39,12 @@
       </slot>
       <p v-if="title" class="text-sm">{{ title }}</p>
       <p v-if="desc" class="text-xs mt-1">{{ desc }}</p>
+      <!-- 默认插槽：承载"自定义主体"文案。
+           原先本组件只暴露 #icon / #action 两个具名插槽，父组件写的 <template #default>
+           会被静默丢弃（浏览器不报错、Vue 不警告），调用方以为文字已渲染、实际空白。 -->
+      <div v-if="$slots.default" class="text-sm">
+        <slot />
+      </div>
       <slot name="action" />
     </div>
   </div>

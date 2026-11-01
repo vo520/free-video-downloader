@@ -20,19 +20,17 @@ export function useToast() {
   // 待显示队列（不含当前正在显示的）
   const queue = []
   let timer = null
-  // 最近已入队消息的指纹 → 出现次数（用于合并重复提示）
-  const recentCounts = new Map()
 
   function nextToast() {
     if (appToast.value || queue.length === 0) return
     const item = queue.shift()
-    const count = recentCounts.get(item.key) || 1
-    recentCounts.set(item.key, count)
-    appToast.value = { type: item.type, message: item.message, count }
+    // 计数存在队列项自身（showToast 合并时累加的是 item.count），
+    // 原实现另用 recentCounts Map 记录，但那个 Map 从未被写入过真实计数，
+    // 取值恒为 1 → App.vue 上的「×N」角标永远不显示。
+    appToast.value = { type: item.type, message: item.message, count: item.count || 1 }
     timer = setTimeout(() => {
       timer = null
       appToast.value = null
-      recentCounts.delete(item.key)
       nextToast()
     }, TOAST_DURATION)
   }
@@ -57,19 +55,11 @@ export function useToast() {
     nextToast()
   }
 
-  function hideToast() {
-    if (timer) clearTimeout(timer)
-    timer = null
-    appToast.value = null
-    queue.length = 0
-    recentCounts.clear()
-  }
-
   onUnmounted(() => {
     if (timer) clearTimeout(timer)
   })
 
   provide('showToast', showToast)
 
-  return { appToast, showToast, hideToast }
+  return { appToast, showToast }
 }

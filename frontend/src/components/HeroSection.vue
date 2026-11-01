@@ -58,8 +58,7 @@
               class="w-full h-13 sm:h-14 pl-12 pr-14 sm:pr-4 rounded-full sm:rounded-r-none border border-transparent bg-white/80 text-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/25 focus:bg-white transition-all"
               :disabled="loading"
               autocomplete="url"
-              @paste="onPaste"
-              @input="pasteHint = 0"
+              @input="onInput"
             />
           </div>
           <BaseButton
@@ -144,7 +143,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { splitUrls } from '../utils/splitUrls.js'
 import Spinner from './ui/Spinner.vue'
 import BaseButton from './ui/BaseButton.vue'
@@ -211,19 +210,20 @@ function onDrop(e) {
   url.value = urls[0] || next
 }
 
-// 粘贴时若检测到多个链接，给出快捷批量入口（不自动跳转，避免打断单条输入）
-// 关键：@input="pasteHint = 0" 与 @paste 同步触发（事件顺序：paste → input），
-// 同步赋值会被 @input 立刻清零，所以用 nextTick 延后到 @input 之后再设。
-function onPaste(e) {
-  const text = e.clipboardData?.getData('text') || ''
-  const urls = splitUrls(text)
-  // 先同步清零，让 @input 触发时 pasteHint 已是 0，nextTick 之后再设新值
-  pasteHint.value = 0
-  if (urls.length > 1) {
-    pastedText.value = text.trim()
-    nextTick(() => {
-      pasteHint.value = urls.length
-    })
+// 输入框里出现多个链接时，给出快捷批量入口（不自动跳转，避免打断单条输入）。
+// 关键：浏览器实际派发顺序是 paste → 微任务 → beforeinput → input，
+// Vue 的 nextTick 是微任务，早于 input 触发，所以原先在 nextTick 里赋值会被随后的
+// input 处理器立刻清零（提示按钮永不出现）。
+// 修正：统一在 input 事件里按输入框当前值判定 —— 粘贴必然触发 input，
+// 且直接读 DOM 值不受 v-model 更新时序影响。
+function onInput(e) {
+  const value = e.target?.value ?? ''
+  const count = splitUrls(value).length
+  if (count > 1) {
+    pastedText.value = value.trim()
+    pasteHint.value = count
+  } else {
+    pasteHint.value = 0
   }
 }
 

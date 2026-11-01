@@ -118,6 +118,9 @@ import('markmap-view'),
     if (!mindmapSvg.value) return
     try {
       const { Transformer, Markmap } = await loadMarkmap()
+      // 重建前先销毁旧实例：markmap 只在 destroy() 里解绑 d3 zoom / resize 监听，
+      // 直接覆盖引用会让每次流式重建都残留一个实例（长视频会累积几十个）。
+      destroyMarkmap()
       mindmapSvg.value.innerHTML = ''
       const transformer = new Transformer()
       const { root } = transformer.transform(md)
@@ -125,6 +128,17 @@ import('markmap-view'),
     } catch (e) {
       console.warn('思维导图渲染失败:', e)
     }
+  }
+
+  // 释放当前 markmap 实例持有的 d3 zoom + resize 监听
+  function destroyMarkmap() {
+    if (!markmapInstance) return
+    try {
+      markmapInstance.destroy()
+    } catch (e) {
+      /* 实例已失效时忽略 */
+    }
+    markmapInstance = null
   }
 
   // 流式渲染防抖：SSE 每个 chunk 都会更新 mindmapMarkdown，若每次同步重建 markmap 实例，
@@ -362,10 +376,7 @@ import('markmap-view'),
       renderTimer = null
     }
     // 释放 markmap 实例持有的 d3 zoom + window resize 等 listener，避免组件卸载后残留
-    if (markmapInstance) {
-      try { markmapInstance.destroy() } catch (e) { /* markmap 销毁已兜底 */ }
-      markmapInstance = null
-    }
+    destroyMarkmap()
   })
 </script>
 
