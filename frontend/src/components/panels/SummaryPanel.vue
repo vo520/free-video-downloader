@@ -40,6 +40,17 @@
         升级 VIP 无限使用
       </BaseButton>
     </div>
+
+    <!-- 空态：无摘要、无配额信息且已结束（总结失败或视频无可用字幕）。
+         原实现这里什么都不渲染 → 面板一片空白，用户只看到一闪而过的 toast，
+         不知道是没内容还是出错了（SubtitlePanel / MindmapPanel 都有空态，此处缺失）。 -->
+    <EmptyState
+      v-if="!loading && !summaryText && !quotaInfo"
+      size="md"
+      variant="info"
+      title="暂无总结内容"
+      desc="AI 总结服务不可用，或该视频没有可用字幕；错误详情会以轻提示形式告知"
+    />
   </div>
 </template>
 
@@ -48,6 +59,7 @@ import { ref, watch, onBeforeUnmount } from 'vue'
 import { renderMarkdown } from '../../utils/markdown.js'
 import Spinner from '../ui/Spinner.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import EmptyState from '../ui/EmptyState.vue'
 
   const props = defineProps({
     summaryText: { type: String, default: '' },
