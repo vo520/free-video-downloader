@@ -272,6 +272,10 @@ let actionErrorTimer = null
 // 降低大历史量首屏负载与 DOM 节点数；小数据量用户（<PAGE_SIZE）体验与全量拉取一致。
 const PAGE_SIZE = 100
 const total = ref(0)
+// 服务端分页游标：已从后端消费的记录条数（不是当前列表长度）。
+// 不能用 items.length 当 offset：抽屉打开期间服务端新增记录（例如刚完成的下载写入历史）
+// 会让整个列表后移，items.length 指向的位置已经错位，「加载更多」会把已加载过的记录再拉回来。
+const loadedOffset = ref(0)
 const loadingMore = ref(false)
 // 已处理过的「宿主透传被删 id」集合：宿主是累积透传同一个数组，
 // 记录已处理项才能只对新增 id 扣减 total，避免重复扣减。
@@ -365,8 +369,10 @@ const filteredItems = computed(() => {
   return list.filter((x) => x.type === activeTab.value)
 })
 
-// 是否还有未加载的历史（后端 total 与已加载条数比较）。搜索态下「加载更多」无意义（搜索仅覆盖已加载部分）。
-const hasMore = computed(() => items.value.length < total.value)
+// 是否还有未加载的历史（后端 total 与已消费的分页游标比较）。搜索态下「加载更多」无意义（搜索仅覆盖已加载部分）。
+// 不能拿 items.length 比较：追加时按 id 去重会让列表条数小于服务端已消费条数，
+// 用列表长度比较 total 会导致「加载更多」永远显示、反复拉取重叠页。
+const hasMore = computed(() => loadedOffset.value < total.value)
 
 // 操作失败提示：列表仍可见，4 秒后自动消失，可手动关闭（×）。
 function showActionError(msg) {
@@ -441,6 +447,8 @@ async function loadItems() {
     // 初始按页拉取（后端已按 extra 解析、去重）；tab/搜索均前端过滤，无需每次切 tab 打后端。
     const { items: list, total: t } = await fetchHistory({ limit: PAGE_SIZE, offset: 0 })
     items.value = list
+    // 游标记录的是服务端消费条数，首屏与静默刷新都以本次返回页长度为准
+    loadedOffset.value = list.length
     total.value = t ?? list.length
   } catch (e) {
     errorMsg.value = getApiError(e, '加载失败')
@@ -459,13 +467,16 @@ async function refreshOnOpen() {
     loadItems()
     return
   }
-  if (items.value.length > PAGE_SIZE || search.value.trim()) return
+  // 已翻到第二页以后则跳过刷新（按分页游标判断，去重后列表条数可能小于首页长度）
+  if (loadedOffset.value > PAGE_SIZE || search.value.trim()) return
   const seq = ++refreshSeq
   try {
     const { items: list, total: t } = await fetchHistory({ limit: PAGE_SIZE, offset: 0 })
     // 期间用户已开始搜索或已重新打开（更新的一次刷新），本次结果作废
     if (seq !== refreshSeq || search.value.trim()) return
     items.value = list
+    // 列表已被重置为首页，分页游标同步回到首页长度
+    loadedOffset.value = list.length
     total.value = t ?? list.length
   } catch {
     /* 静默失败：保留旧列表，用户仍可正常浏览已加载内容 */
@@ -474,12 +485,18 @@ async function refreshOnOpen() {
 
 // 按页追加更多历史（后端 list_history 原生支持 offset/limit/total），避免一次性拉取全部造成首屏卡顿。
 async function loadMore() {
-  // 三重守卫：初始加载中 / 加载更多中 / 已加载完。避免初始未加载完成时用户点「加载更多」导致 offset 偏移错乱。
-  if (loading.value || loadingMore.value || items.value.length >= total.value) return
+  // 三重守卫：初始加载中 / 加载更多中 / 已加载完。offset 用服务端消费游标，不能用 items.length。
+  if (loading.value || loadingMore.value || loadedOffset.value >= total.value) return
   loadingMore.value = true
   try {
-    const { items: list, total: t } = await fetchHistory({ limit: PAGE_SIZE, offset: items.value.length })
-    items.value = items.value.concat(list)
+    const { items: list, total: t } = await fetchHistory({ limit: PAGE_SIZE, offset: loadedOffset.value })
+    // 抽屉打开期间服务端可能插入新记录，使本次返回页与已加载页重叠：按 id 去重，
+    // 否则列表会出现重复条目（同一 id 重复渲染，Vue 还会报 duplicate key）。
+    const seen = new Set(items.value.map((x) => x.id))
+    items.value = items.value.concat(list.filter((x) => !seen.has(x.id)))
+    // 游标按「本次服务端消费的条数」推进，而不是按去重后真正新增的条数：
+    // 只有跳过重叠区才能继续向后翻，否则会在同一页原地打转。
+    loadedOffset.value += list.length
     total.value = t ?? total.value
   } catch (e) {
     showActionError(getApiError(e, '加载更多失败'))
@@ -518,6 +535,11 @@ async function remove(it) {
     await deleteHistoryItem(it.id)
     // 搜索态下列表由 searchResults 驱动：只过滤 items 会让已删条目继续留在搜索结果里，
     // 用户点了删除却「什么都没发生」，还能再次点开已删记录。两处列表必须同步。
+    // 删除的是已加载页里的记录时，服务端列表整体前移一位，分页游标同步回退，
+    // 否则「加载更多」的 offset 会跳过一条尚未加载的记录。
+    if (items.value.some((x) => x.id === it.id)) {
+      loadedOffset.value = Math.max(0, loadedOffset.value - 1)
+    }
     items.value = items.value.filter((x) => x.id !== it.id)
     total.value = Math.max(0, total.value - 1)
     if (searchResults.value.some((x) => x.id === it.id)) {
@@ -546,6 +568,7 @@ async function clearAll() {
     // 快照待删的全部条目：让 App.vue 检查其中是否有 parse 类型对应当前显示视频
     const deletedItems = items.value.slice()
     items.value = []
+    loadedOffset.value = 0
     total.value = 0
     search.value = ''
     // 给出明确数量反馈，避免用户怀疑"是否真的清完了"
@@ -581,6 +604,9 @@ watch(() => props.removedIds, (ids) => {
   // 只统计本次新增的 id（宿主是累积透传，重复的 id 不能重复扣 total）
   const fresh = ids.filter((id) => !removedIdSet.has(id))
   fresh.forEach((id) => removedIdSet.add(id))
+  // 被删记录若在已加载页里，服务端列表整体前移：游标按实际被移出的条数回退，
+  // 否则后续「加载更多」会跳过一条尚未加载的记录。
+  const removedLoaded = items.value.filter((x) => set.has(x.id)).length
   items.value = items.value.filter((x) => !set.has(x.id))
   // 搜索态下列表由服务端搜索结果驱动，同样要移出宿主删除的条目，
   // 否则搜索结果里仍留着已删记录，点进去还能看到被删内容。
@@ -592,12 +618,14 @@ watch(() => props.removedIds, (ids) => {
     }
   }
   total.value = Math.max(0, total.value - fresh.length)
+  loadedOffset.value = Math.max(0, loadedOffset.value - removedLoaded)
 })
 
 // 宿主清空历史成功 → 同步清空抽屉列表（含分页总数与筛选态）。
 watch(() => props.clearSeq, (v, prev) => {
   if (!v || v === prev) return
   items.value = []
+  loadedOffset.value = 0
   total.value = 0
   search.value = ''
   expandedId.value = null

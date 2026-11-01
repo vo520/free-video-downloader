@@ -342,7 +342,16 @@ async function installHistoryRoutes(page, fixture) {
     const list = kw
       ? fixture.filter((it) => it.title.toLowerCase().includes(kw))
       : fixture.filter((it) => !it.onlyViaSearch)
-    return route.fulfill({ json: { success: true, data: list, total: list.length } })
+    // 与后端一致：按 limit/offset 切片并返回全量 total（抽屉的分页逻辑依赖这两个字段）
+    const offset = Number(url.searchParams.get('offset') || 0)
+    const limit = Number(url.searchParams.get('limit') || list.length)
+    return route.fulfill({
+      json: {
+        success: true,
+        data: list.slice(offset, offset + limit),
+        total: list.length,
+      },
+    })
   })
 }
 
@@ -391,6 +400,57 @@ async function testHistoryDrawerSearchExtras(page) {
   // 清空关键词，避免影响后续用例
   await page.getByLabel('搜索历史记录').fill('')
   await page.waitForTimeout(400)
+}
+
+// ---------- 7.2 历史抽屉分页：服务端插入新记录后「加载更多」不得重复已加载条目 ----------
+// 旧实现用 items.length 当 offset：抽屉打开期间服务端新增一条记录（例如刚完成的下载写入历史），
+// 整个列表后移一位，offset 指向的位置已经错位，「加载更多」会把已加载页的最后一条再拉回来，
+// 列表出现重复条目；去重后 items.length 又永远追不上 total，「加载更多」会一直重复拉重叠页。
+async function testHistoryDrawerPagination(browser, url) {
+  const page = await browser.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  page.on('dialog', (d) => d.accept())
+  await page.addInitScript(() => localStorage.setItem('saveany_token', 'regression-token'))
+
+  // 150 条历史：首屏只加载 100 条，剩余靠「加载更多」
+  const fixture = Array.from({ length: 150 }, (_, i) => makeHistoryItem(i + 1, `分页条目 ${i + 1}`))
+  await installHistoryRoutes(page, fixture)
+  await page.goto(`${url}.regression-harness/index.html`)
+  await page.waitForSelector('#video-url-input')
+
+  await page.locator('button[title="历史记录"]').click()
+  await page.waitForFunction(() => document.body.innerText.includes('分页条目 100'))
+  assert.equal(
+    await page.getByText('分页条目 150', { exact: true }).count(),
+    0,
+    '首屏不应一次性加载第二页记录'
+  )
+
+  // 抽屉打开期间服务端新增一条记录（下载完成落库），服务端列表整体后移一位
+  fixture.unshift(makeHistoryItem(999, '分页新增条目'))
+
+  await page.getByRole('button', { name: /加载更多/ }).click()
+  await page.waitForFunction(
+    () => document.body.innerText.includes('分页条目 150'),
+    null,
+    { timeout: 3000 }
+  )
+
+  const dupCount = await page.getByText('分页条目 100', { exact: true }).count()
+  assert.equal(
+    dupCount,
+    1,
+    `分页追加后出现重复条目（「分页条目 100」出现 ${dupCount} 次，期望 1 次）`
+  )
+  assert.equal(
+    await page.getByRole('button', { name: /加载更多/ }).count(),
+    0,
+    '全部加载完后「加载更多」仍然显示（分页游标未推进到 total）'
+  )
+
+  await page.close()
+  assert.deepEqual(errors, [], `分页用例存在运行时错误：${errors.join(' / ')}`)
 }
 
 // ---------- 8. 源码契约：修复点不能被改回去 ----------
@@ -552,6 +612,25 @@ function testSourceContracts() {
     paymentToastTag[0].includes('-translate-x-1/2') && !paymentToastTag[0].includes('animate-toast-in'),
     '支付 toast 的入场动画挂在了带 -translate-x-1/2 的容器上（水平位移会叠加）'
   )
+
+  // 历史抽屉分页游标：offset 必须用服务端已消费条数，不能用 items.length。
+  // 抽屉打开期间服务端插入记录（如下载完成写历史）会让已加载页整体后移，
+  // 用列表长度当 offset 会把已加载条目再拉回来 → 重复条目 / duplicate key。
+  const drawerCode = stripComments(read('components/HistoryDrawer.vue'))
+  assert.ok(
+    /const hasMore = computed\(\(\) => loadedOffset\.value < total\.value\)/.test(drawerCode),
+    'HistoryDrawer 的 hasMore 又按 items.length 比较 total（去重后「加载更多」会一直显示）'
+  )
+  const loadMoreBody = drawerCode.match(/async function loadMore\(\)\s*\{([\s\S]*?)\n\}/)
+  assert.ok(loadMoreBody, 'HistoryDrawer 缺少 loadMore')
+  assert.ok(
+    /offset:\s*loadedOffset\.value/.test(loadMoreBody[1]),
+    'HistoryDrawer 的 loadMore 未用 loadedOffset 作分页 offset（删除/新增后分页会错位）'
+  )
+  assert.ok(
+    /new Set\(items\.value\.map\(\(x\) => x\.id\)\)/.test(loadMoreBody[1]),
+    'HistoryDrawer 的 loadMore 未按 id 去重（抽屉打开期间新增记录会导致重复条目）'
+  )
 }
 
 // ============================ 主流程 ============================
@@ -594,6 +673,7 @@ try {
   await testNormalizeHistoryUrl(page)
   await testHistoryDrawerSync(page, historyFixture)
   await testHistoryDrawerSearchExtras(page)
+  await testHistoryDrawerPagination(browser, url)
   testSourceContracts()
 
   assert.deepEqual(errors, [], `页面存在运行时错误：${errors.join(' / ')}`)
