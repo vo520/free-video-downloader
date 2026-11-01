@@ -116,10 +116,13 @@ def create_checkout_session(req: CreateCheckoutRequest, user: dict = Depends(get
     try:
         update_order_stripe_session(order_no, session.id)
     except Exception as e:
-        # Stripe 会话已创建但订单未绑定 session_id：webhook 按 session_id 匹配不到订单，
-        # 用户已付款也不会开通 VIP。此处先补写绑定（按 order_no 匹配，不依赖 session_id）。
-        _fail_order_quietly(order_no, str(e))
-        raise HTTPException(status_code=500, detail="创建支付会话失败，请稍后重试")
+        # 关键：这里不能把订单置 failed。会话已经创建成功，用户仍会拿到 checkout_url
+        # 并可能完成支付；而 fail_order 会把订单翻成 failed，webhook 的
+        # complete_order / complete_order_by_order_no 都带 status='pending' 守卫，
+        # 之后就再也匹配不到这条订单 → 用户已付款但 VIP 永不激活。
+        # 保持 pending，由 webhook 的 _complete_order_with_fallback 按
+        # metadata.order_no 兜底查找并补写 stripe_session_id 后完成订单。
+        print(f"[Payment] 订单 {order_no} 绑定 session_id 失败，交由 webhook 按 order_no 兜底: {e}")
 
     return {
         "success": True,

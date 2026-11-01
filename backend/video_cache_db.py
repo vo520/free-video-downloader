@@ -20,7 +20,14 @@ import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
-__all__ = ["VIDEO_CACHE_DB_PATH", "get_video_cache_db_path", "VideoCacheDB", "video_cache_db"]
+__all__ = [
+    "VIDEO_CACHE_DB_PATH",
+    "get_video_cache_db_path",
+    "normalize_url",
+    "normalize_platform",
+    "VideoCacheDB",
+    "video_cache_db",
+]
 
 VIDEO_CACHE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "video_cache.db")
 
@@ -43,7 +50,7 @@ def _to_utc_iso(value: str) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def _normalize_url(url: str) -> str:
+def normalize_url(url: str) -> str:
     """URL 归一化：与 history 表使用同一口径（database.canonical_video_url）。
 
     原实现只小写 scheme/netloc，保留 www. 与 fragment，会导致同一视频在
@@ -62,8 +69,23 @@ def _normalize_url(url: str) -> str:
     return canonical_video_url(url)
 
 
+def normalize_platform(platform) -> str:
+    """平台标识归一化：与 history / 后台筛选 / 缓存规则共用 database.canonical_platform 口径。
+
+    入库值此前直接取 info['platform']：抖音专用解析写中文 "抖音"，yt-dlp 写
+    extractor 名（"BiliBili" / "TikTok" …，大小写不固定），而后台平台筛选与缓存
+    规则用的是小写 slug，三者互不相等 → 按平台筛选永远筛不出数据、按平台配置的
+    缓存规则永远不命中。统一在此收敛，写入与查询都用同一口径。
+    """
+    try:
+        from database import canonical_platform
+    except ImportError:
+        return (platform or "").strip().lower() if platform is not None else ""
+    return canonical_platform(platform)
+
+
 def _url_hash(url: str) -> str:
-    return hashlib.sha256(_normalize_url(url).encode("utf-8")).hexdigest()
+    return hashlib.sha256(normalize_url(url).encode("utf-8")).hexdigest()
 
 
 class VideoCacheDB:
@@ -173,7 +195,24 @@ class VideoCacheDB:
                 """
             )
             self._migrate_url_normalization(conn)
+            self._migrate_platform_normalization(conn)
             self._seed_default_cache_rules(conn)
+
+    def _migrate_platform_normalization(self, conn):
+        """把存量 platform 列改写为统一的小写 slug 口径（幂等）。
+
+        老数据里 platform 存的是解析器原始写法（"抖音" / "BiliBili" / "YouTube"），
+        与后台筛选、缓存规则使用的小写 slug 不一致，导致按平台筛选空结果、
+        按平台配置的缓存规则永不命中。只改写有变化的行，重复执行无副作用。
+        """
+        rows = conn.execute(
+            "SELECT DISTINCT platform FROM video_cache WHERE platform IS NOT NULL AND platform != ''"
+        ).fetchall()
+        for row in rows:
+            old = row["platform"]
+            new = normalize_platform(old)
+            if new and new != old:
+                conn.execute("UPDATE video_cache SET platform=? WHERE platform=?", (new, old))
 
     # 内置默认缓存规则。
     # 规则表此前恒空 —— get_cache_ttl 遍历不到任何规则，永远回退到硬编码的 86400，
@@ -249,7 +288,7 @@ class VideoCacheDB:
     def _migrate_url_normalization(self, conn):
         """把存量记录的 video_url / url_hash 重写为当前归一化口径。
 
-        背景：早期 _normalize_url 只小写 scheme/netloc（保留 www. 与 fragment），
+        背景：早期 normalize_url 只小写 scheme/netloc（保留 www. 与 fragment），
         与 history 表口径不同，导致同一视频在两表对不上。后来统一为
         canonical_video_url（强制 https、去 www.、去 fragment、纯数字补全），
         老记录的键值格式就与新代码不一致了 —— 用新口径查询会匹配不上。
@@ -265,10 +304,10 @@ class VideoCacheDB:
         if not rows:
             return
 
-        # 按归一化后的 URL 分组
+        # 按归一化后的 URL 分群
         groups: dict[str, list] = {}
         for row in rows:
-            groups.setdefault(_normalize_url(row["video_url"]), []).append(row)
+            groups.setdefault(normalize_url(row["video_url"]), []).append(row)
 
         for new_url, group in groups.items():
             keeper = group[0]  # id 最小的那条
@@ -308,7 +347,7 @@ class VideoCacheDB:
             return False
         # 归一化后再入库：video_url 列、url_hash 去重键与 history 表保持同一口径，
         # 否则同一视频会以不同形态存成多条记录（唯一约束只对完全相同的字符串生效）。
-        url = _normalize_url(url)
+        url = normalize_url(url)
         if not url:
             return False
 
@@ -316,7 +355,9 @@ class VideoCacheDB:
         meta = video_data.get("metadata") or {}
         success = 1 if video_data.get("success", True) else 0
 
-        platform = info.get("platform")
+        # 平台名统一收敛为小写 slug 后再入库，否则后台按平台筛选与缓存规则都匹配不上
+        # （抖音专用解析给 "抖音"，yt-dlp 给 "BiliBili"/"TikTok" 这类大小写不固定的名字）。
+        platform = normalize_platform(info.get("platform"))
         video_id = info.get("video_id")
         title = info.get("title")
         description = info.get("description")
@@ -374,7 +415,7 @@ class VideoCacheDB:
     def get_video(self, url: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM video_cache WHERE video_url=?", (_normalize_url(url),)
+                "SELECT * FROM video_cache WHERE video_url=?", (normalize_url(url),)
             ).fetchone()
         return dict(row) if row else None
 
@@ -393,8 +434,10 @@ class VideoCacheDB:
             clauses.append("cache_status=?")
             params.append(cache_status)
         if platform:
-            clauses.append("platform=?")
-            params.append(platform)
+            # 平台名大小写不敏感：存量数据里还有 "BiliBili" / "YouTube" 这类原始写法，
+            # 而筛选参数是前端下拉的小写 slug，直接等值比较会永远筛不出数据。
+            clauses.append("LOWER(COALESCE(platform, ''))=?")
+            params.append(normalize_platform(platform))
         if hot_only:
             clauses.append("is_hot=1")
         if search:
@@ -441,7 +484,7 @@ class VideoCacheDB:
             conn.execute(
                 "UPDATE video_cache SET cache_hit_count = cache_hit_count + 1, "
                 "last_access_at=? WHERE video_url=?",
-                (_now(), _normalize_url(url)),
+                (_now(), normalize_url(url)),
             )
 
     def increment_hit_and_mark_hot(self, url: str, threshold: int) -> bool:
@@ -451,7 +494,7 @@ class VideoCacheDB:
         （increment → 重新 SELECT 判断阈值 → mark）产生的竞态：并发命中时
         可能重复判定或漏判热门。返回是否标记了热门。
         """
-        key = _normalize_url(url)
+        key = normalize_url(url)
         with self._conn() as conn:
             conn.execute(
                 "UPDATE video_cache SET cache_hit_count = cache_hit_count + 1, "
@@ -469,7 +512,7 @@ class VideoCacheDB:
         if expires_at:
             # 统一转成带 UTC 时区的 isoformat，保证与 _now() 按字符串比较时语义正确
             expires_at = _to_utc_iso(expires_at)
-        key = _normalize_url(url)
+        key = normalize_url(url)
         with self._conn() as conn:
             if expires_at:
                 cur = conn.execute(
@@ -496,14 +539,14 @@ class VideoCacheDB:
 
     def delete_video(self, url: str) -> bool:
         with self._conn() as conn:
-            cur = conn.execute("DELETE FROM video_cache WHERE video_url=?", (_normalize_url(url),))
+            cur = conn.execute("DELETE FROM video_cache WHERE video_url=?", (normalize_url(url),))
         return cur.rowcount > 0
 
     def mark_as_hot(self, url: str) -> bool:
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE video_cache SET is_hot=1, updated_at=? WHERE video_url=?",
-                (_now(), _normalize_url(url)),
+                (_now(), normalize_url(url)),
             )
         return cur.rowcount > 0
 
@@ -567,7 +610,9 @@ class VideoCacheDB:
                 (
                     rule_name,
                     rule_data.get("rule_type"),
-                    rule_data.get("platform"),
+                    # 规则里的平台名同样收敛为小写 slug，与管理台下拉/入库数据同一口径，
+                    # 否则规则里写 "BiliBili"、数据里存 "bilibili" 时规则永远不命中。
+                    normalize_platform(rule_data.get("platform")),
                     rule_data.get("url_pattern"),
                     rule_data.get("quality"),
                     rule_data.get("min_duration"),

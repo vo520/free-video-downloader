@@ -13,7 +13,7 @@ from auth import (
     verify_password,
     DEMO_EMAIL,
 )
-from database import create_user, get_user_by_email, get_db
+from database import create_user, get_user_by_email, get_db, _is_vip_active
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -60,19 +60,13 @@ def _user_response_for(email: str, user: dict) -> dict:
 
 
 def _build_user_response(user: dict) -> dict:
-    is_vip = False
-    vip_expire_at = None
-    if user.get("is_vip") and user.get("vip_expire_at"):
-        try:
-            expire_str = user["vip_expire_at"]
-            if "+" in expire_str or "Z" in expire_str:
-                expire = datetime.fromisoformat(expire_str.replace("Z", "+00:00"))
-            else:
-                expire = datetime.fromisoformat(expire_str).replace(tzinfo=timezone.utc)
-            is_vip = expire > datetime.now(timezone.utc)
-            vip_expire_at = user["vip_expire_at"]
-        except ValueError:
-            pass
+    # VIP 有效性统一复用 database._is_vip_active：此前这里重复实现了一份过期解析，
+    # 只捕获 ValueError，vip_expire_at 为非字符串（如 NULL 以外的脏数据）时抛
+    # TypeError 直接 500；且与配额接口各写一套口径，一旦漂移就会出现
+    # 「登录返回 VIP、AI 总结却按普通用户扣次」的矛盾。
+    is_vip = _is_vip_active(user)
+    # 非 VIP 不再外露到期时间（前端仅在 is_vip 时才展示，保留旧值只会造成误导）。
+    vip_expire_at = user["vip_expire_at"] if is_vip else None
 
     return {
         "id": user["id"],

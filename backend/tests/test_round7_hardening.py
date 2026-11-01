@@ -206,8 +206,57 @@ def test_active_vip_is_unlimited(fresh_user):
     assert (user["daily_summary_count"] or 0) == 0
 
 
-# ===== 3. busy_timeout =====
+def test_auth_response_uses_shared_vip_parser(fresh_user):
+    """登录/注册响应必须与配额接口共用同一 VIP 判定（第 3 处重复实现已收敛）。
 
+    旧实现：api_auth._build_user_response 自己写了一份过期解析且只捕获
+    ValueError。vip_expire_at 存成非字符串（SQLite 动态类型，脏数据/手工改库
+    都可能出现）时 `"+" in expire_str` 抛 TypeError 直接 500；而且与
+    database._is_vip_active 各写一套，口径一旦漂移就会出现
+    「登录说 VIP、AI 总结扣次数」的矛盾。
+    """
+    import api_auth
+
+    from datetime import datetime, timedelta, timezone
+
+    def response():
+        return api_auth._build_user_response(database.get_user_by_id(fresh_user))
+
+    # 1) 有效 VIP：is_vip 与到期时间都要正确返回
+    expire = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    with database.get_db() as conn:
+        conn.execute(
+            "UPDATE users SET is_vip = 1, vip_expire_at = ? WHERE id = ?",
+            (expire, fresh_user),
+        )
+    resp = response()
+    assert resp["is_vip"] is True
+    assert resp["vip_expire_at"] == expire
+
+    # 2) 过期 VIP：按免费用户返回，且不外露到期时间
+    expired = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    with database.get_db() as conn:
+        conn.execute(
+            "UPDATE users SET is_vip = 1, vip_expire_at = ? WHERE id = ?",
+            (expired, fresh_user),
+        )
+    resp = response()
+    assert resp["is_vip"] is False
+    assert resp["vip_expire_at"] is None
+
+    # 3) 脏数据（非字符串）：不得抛 TypeError；结果与配额接口口径一致
+    with database.get_db() as conn:
+        conn.execute(
+            "UPDATE users SET is_vip = 1, vip_expire_at = 12345 WHERE id = ?",
+            (fresh_user,),
+        )
+    resp = response()
+    assert resp["is_vip"] is False
+    allowed, remaining = database.check_summary_quota(fresh_user)
+    assert allowed is True and remaining == database.FREE_DAILY_SUMMARY_LIMIT
+
+
+# ===== 3. busy_timeout =====
 
 def test_get_db_sets_busy_timeout(fresh_user):
     """get_db 必须设置 busy_timeout，否则并发写立刻抛 database is locked。"""

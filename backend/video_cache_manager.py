@@ -10,10 +10,17 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 
 try:
-    from video_cache_db import video_cache_db
+    from video_cache_db import video_cache_db, normalize_url, normalize_platform
     DB_ENABLED = True
 except ImportError:
     DB_ENABLED = False
+
+    # video_cache_db 不可用时退回最宽松的归一化，保证规则匹配逻辑仍能独立运行。
+    def normalize_url(url):
+        return url or ""
+
+    def normalize_platform(platform):
+        return (platform or "").strip().lower() if platform is not None else ""
 
 
 class CacheRuleMatcher:
@@ -35,8 +42,9 @@ class CacheRuleMatcher:
         """匹配平台"""
         if not rule_platform:
             return True
-        # 数据库字段可能为 NULL（None），需兜底为空串
-        return (platform or "").lower() == rule_platform.lower()
+        # 两边都过同一套平台归一化：入库值是 yt-dlp 的 extractor 名（"BiliBili"）或
+        # 抖音专用解析的 "抖音"，规则里也可能写成中文/大小写混排，直接小写比较仍对不上。
+        return normalize_platform(platform) == normalize_platform(rule_platform)
     
     @staticmethod
     def match_duration(duration: float, min_dur: float, max_dur: float) -> bool:
@@ -99,7 +107,13 @@ class VideoCacheManager:
         """
         if not self.db:
             return 86400
-        
+
+        # 规则里的 url_pattern 常按用户看到的链接写（可能带 http:// 或 www.），
+        # 而入库 / 去重用的是归一化后的 URL。只拿原始 URL 匹配会漏掉归一化形态的规则，
+        # 只拿归一化 URL 匹配又会漏掉带 www. 的规则，两种形态都试一次。
+        raw_url = url or ""
+        normalized_url = normalize_url(raw_url)
+
         try:
             rules = self.db.get_cache_rules()
             
@@ -111,7 +125,9 @@ class VideoCacheManager:
                 if not self.rule_matcher.match_platform(platform, rule.get('platform', '')):
                     continue
                 
-                if not self.rule_matcher.match_url(url, rule.get('url_pattern', '')):
+                pattern = rule.get('url_pattern', '')
+                if not (self.rule_matcher.match_url(normalized_url, pattern)
+                        or self.rule_matcher.match_url(raw_url, pattern)):
                     continue
                 
                 if not self.rule_matcher.match_quality(quality, rule.get('quality', '')):

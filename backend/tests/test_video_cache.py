@@ -385,5 +385,119 @@ class TestIntegration:
         assert video['cache_status'] == "expired"
 
 
+class TestPlatformNormalization:
+    """平台标识口径回归测试。
+
+    根因：入库值是解析器原始写法（抖音专用解析给 "抖音"，yt-dlp 给 "BiliBili"
+    这类大小写不固定的名字），而后台平台筛选与缓存规则用的是小写 slug，
+    导致按平台筛选永远空结果、按平台配置的缓存规则永远不命中。
+    """
+
+    def test_save_video_normalizes_platform(self, test_db):
+        """入库 platform 统一收敛为小写 slug。"""
+        test_db.save_video({
+            "url": "https://www.douyin.com/video/7001234",
+            "video_info": {"platform": "抖音", "video_id": "7001234"},
+            "metadata": {},
+            "success": True,
+        })
+        test_db.save_video({
+            "url": "https://www.bilibili.com/video/BV1xx",
+            "video_info": {"platform": "BiliBili", "video_id": "BV1xx"},
+            "metadata": {},
+            "success": True,
+        })
+
+        assert test_db.get_video("https://www.douyin.com/video/7001234")["platform"] == "douyin"
+        assert test_db.get_video("https://www.bilibili.com/video/BV1xx")["platform"] == "bilibili"
+
+    def test_filter_by_platform_matches_canonical_slug(self, test_db):
+        """按小写 slug 筛选能命中入库时的大写/中文平台名。"""
+        test_db.save_video({
+            "url": "https://www.bilibili.com/video/BV1yy",
+            "video_info": {"platform": "BiliBili", "video_id": "BV1yy"},
+            "metadata": {},
+            "success": True,
+        })
+
+        # 用中文别名筛选也应命中（前端/规则可能沿用中文写法）
+        for platform in ("bilibili", "BiliBili", "哔哩哔哩"):
+            rows = test_db.get_videos(platform=platform)
+            assert len(rows) == 1, f"platform={platform} 筛选未命中"
+        assert test_db.get_videos(platform="youtube") == []
+
+    def test_match_platform_uses_shared_canonical_form(self):
+        """规则匹配双端都过平台归一化，中文/大小写混排也能命中。"""
+        from video_cache_manager import CacheRuleMatcher
+
+        assert CacheRuleMatcher.match_platform("抖音", "douyin") is True
+        assert CacheRuleMatcher.match_platform("BiliBili", "bilibili") is True
+        assert CacheRuleMatcher.match_platform("YouTube", "youtube") is True
+        assert CacheRuleMatcher.match_platform("tiktok", "douyin") is False
+        # 规则未限定平台时视为通配
+        assert CacheRuleMatcher.match_platform("douyin", "") is True
+
+    def test_get_cache_ttl_matches_platform_rule_with_original_platform(self):
+        """按平台配置的 TTL 规则在传入原始平台名（"抖音"）时也能命中。"""
+        from video_cache_manager import VideoCacheManager
+
+        class _StubDB:
+            def __init__(self, rules):
+                self._rules = rules
+
+            def get_cache_rules(self):
+                return self._rules
+
+        rules = [{
+            "rule_name": "douyin_fast",
+            "rule_type": "ttl",
+            "platform": "douyin",
+            "url_pattern": "",
+            "quality": "",
+            "min_duration": 0,
+            "max_duration": 0,
+            "ttl_seconds": 3600,
+            "priority": 10,
+            "is_active": 1,
+        }]
+
+        manager = VideoCacheManager()
+        original_db = manager.db
+        manager.db = _StubDB(rules)
+        try:
+            assert manager.get_cache_ttl("https://www.douyin.com/video/1", "抖音", "", 10) == 3600
+            # 平台不匹配时回退默认 24h
+            assert manager.get_cache_ttl("https://www.douyin.com/video/1", "youtube", "", 10) == 86400
+        finally:
+            manager.db = original_db
+
+    def test_get_cache_ttl_matches_rule_written_with_www(self):
+        """规则里的 url_pattern 按用户看到的带 www. 链接书写时，仍能匹配归一化后的 URL。"""
+        from video_cache_manager import VideoCacheManager
+
+        class _StubDB:
+            def get_cache_rules(self):
+                return [{
+                    "rule_name": "bili_www",
+                    "rule_type": "ttl",
+                    "platform": "",
+                    "url_pattern": r"^https://www\.bilibili\.com",
+                    "quality": "",
+                    "min_duration": 0,
+                    "max_duration": 0,
+                    "ttl_seconds": 7200,
+                    "priority": 10,
+                    "is_active": 1,
+                }]
+
+        manager = VideoCacheManager()
+        original_db = manager.db
+        manager.db = _StubDB()
+        try:
+            assert manager.get_cache_ttl("https://www.bilibili.com/video/BV1zz", "", "", 10) == 7200
+        finally:
+            manager.db = original_db
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

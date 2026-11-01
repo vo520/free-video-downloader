@@ -201,6 +201,34 @@ def canonical_video_url(url):
     return _normalize_video_url(raw)
 
 
+# 平台标识归一化别名表：只有「中文名」与「英文 slug」同时存在时才需要显式映射。
+# 抖音专用解析返回中文 "抖音"，而后台筛选 / 缓存规则用的是英文 slug（douyin/bilibili/...）。
+_PLATFORM_ALIASES = {
+    "抖音": "douyin",
+    "哔哩哔哩": "bilibili",
+    "b站": "bilibili",
+}
+
+
+def canonical_platform(platform) -> str:
+    """把平台标识归一为小写 slug（youtube/bilibili/douyin/twitter/...）。
+
+    平台名在三处写法不同：抖音专用解析返回中文 "抖音"；yt-dlp 返回 extractor 名
+    （"youtube" / "BiliBili" / "TikTok"…，大小写不固定）；而后台平台筛选与缓存规则
+    用的是小写 slug。三者互不相等时，后台按平台筛选永远筛不出数据、按平台配置的
+    缓存规则也永远不命中。这里统一收敛到小写 slug，入库 / 筛选 / 规则匹配共用同一口径。
+
+    未识别的平台名按小写原样保留（如 "tiktok"），不丢信息。
+    """
+    if platform is None:
+        return ""
+    raw = str(platform).strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    return _PLATFORM_ALIASES.get(lowered, lowered)
+
+
 def add_history(user_id, htype, video_url='', title='', platform='', thumbnail='', extra=None, snapshot=None):
     """记录/更新一条用户历史（解析/下载/总结）。
 

@@ -140,3 +140,54 @@ def test_update_order_stripe_session_uses_iso_utc(tmp_path, monkeypatch):
     # ISO 格式：T 分隔且带时区后缀
     assert "T" in row["updated_at"], row["updated_at"]
     assert "+00:00" in row["updated_at"] or row["updated_at"].endswith("Z"), row["updated_at"]
+
+
+def test_checkout_binding_failure_keeps_order_pending(tmp_path, monkeypatch):
+    """回归：会话已创建但 session_id 绑定写库失败时，订单必须保持 pending。
+
+    根因：原实现把订单置 failed。而 webhook 的 complete_order /
+    complete_order_by_order_no 都带 status='pending' 守卫，failed 订单永不匹配
+    → 用户实际已付款但 VIP 永不激活。保持 pending 后，webhook 可按 metadata.order_no
+    兜底补绑 session_id 并完成订单。
+    """
+    import database
+    import api_payment
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    user = database.create_user("checkout_bind@example.com", "x")
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_key")
+    monkeypatch.setenv("STRIPE_PRICE_ID_MONTHLY", "price_test")
+
+    class _Session:
+        id = "cs_bind_fail_1"
+        url = "https://checkout.stripe.test/cs_bind_fail_1"
+
+    monkeypatch.setattr(
+        api_payment.stripe.checkout.Session, "create", lambda **kwargs: _Session()
+    )
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("db write failed")
+
+    monkeypatch.setattr(api_payment, "update_order_stripe_session", _boom)
+
+    resp = api_payment.create_checkout_session(
+        api_payment.CreateCheckoutRequest(plan_type="monthly"), user
+    )
+    # 会话可用，仍要把 checkout_url 交给用户，不能因绑定失败而 500
+    assert resp["success"] is True
+    assert resp["data"]["checkout_url"] == _Session.url
+
+    order_no = resp["data"]["order_no"]
+    order = database.get_order_by_no(order_no)
+    assert order["status"] == "pending", "绑定失败不得把订单置为 failed"
+    assert order["stripe_session_id"] is None
+
+    # webhook 的 order_no 兜底路径必须能完成订单并补绑 session_id
+    completed = database.complete_order_by_order_no(order_no, _Session.id, "pi_bind_fail_1")
+    assert completed is not None
+    refreshed = database.get_order_by_no(order_no)
+    assert refreshed["status"] == "paid"
+    assert refreshed["stripe_session_id"] == _Session.id

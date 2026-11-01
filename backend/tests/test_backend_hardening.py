@@ -88,3 +88,29 @@ def test_thumbnail_proxy_uses_sni_hostname():
     assert captured["url"] == "https://93.184.216.34:8443/a.jpg"
     assert captured["headers"]["Host"] == "img.example.com:8443"
     assert captured["extensions"] == {"sni_hostname": "img.example.com"}
+
+
+def test_enforce_quota_deletes_completed_before_part(tmp_path):
+    """回归：配额清理必须先删已完成文件，.part 是下载中的临时文件，最后才动。
+
+    原实现的排序让 .part 排在最前优先被删，一个请求触发清理会打断另一个
+    并发请求正在进行的下载（表现为下载中断 / 文件残缺）。
+    """
+    from downloader import _enforce_quota
+
+    # 已完成的旧文件 6KB + 正在下载的 .part 6KB，配额 8KB
+    completed = tmp_path / "old.mp4"
+    completed.write_bytes(b"x" * 6144)
+    os.utime(completed, (1_600_000_000, 1_600_000_000))
+
+    in_progress = tmp_path / "running.mp4.part"
+    in_progress.write_bytes(b"y" * 6144)
+
+    _enforce_quota(str(tmp_path), limit=8192)
+
+    assert not completed.exists(), "应先删除已完成文件"
+    assert in_progress.exists(), "不得删除正在写入的 .part 临时文件"
+
+    # 目录里只剩 .part 且仍超限时才允许清理它（避免磁盘写满）
+    _enforce_quota(str(tmp_path), limit=1024)
+    assert not in_progress.exists()

@@ -6,7 +6,7 @@ import yt_dlp
 from typing import Optional
 
 
-# 下载临时目录磁盘配额：超过该值时按修改时间清理旧文件（优先删除 .part 临时文件）。
+# 下载临时目录磁盘配额：超过该值时按修改时间清理旧文件（先清理已完成文件，.part 最后）。
 MAX_DOWNLOAD_DIR_BYTES = 2 * 1024 * 1024 * 1024  # 2GB
 
 # 清理操作为进程内全局串行：避免并发下载请求同时执行清理，
@@ -17,8 +17,11 @@ _quota_lock = threading.Lock()
 def _enforce_quota(download_dir: str, limit: int = MAX_DOWNLOAD_DIR_BYTES) -> None:
     """下载目录超过配额时，按修改时间从旧到新删除文件直至低于阈值。
 
-    优先删除 .part 临时文件以降低误删正在下载文件的风险；仍超限时再清理已完成文件。
-    使用进程锁保证并发下载时清理串行执行，不会误删其他请求正在进行中的 .part。
+    .part 是下载中的临时文件（yt-dlp / douyin 都写 xxx.mp4.part），
+    必须最后才清理：先前的排序让 .part 排在最前、优先被删，一次配额清理就会
+    打断另一个并发请求正在进行的下载。现在先删已完成文件（旧的优先），
+    只有当目录里只剩 .part 时才动它们。
+    使用进程锁保证并发下载时清理串行执行。
     用于防止服务端落盘无上限导致磁盘写满。
     """
     with _quota_lock:
@@ -35,8 +38,9 @@ def _enforce_quota(download_dir: str, limit: int = MAX_DOWNLOAD_DIR_BYTES) -> No
         total = sum(os.path.getsize(e) for e in entries)
         if total <= limit:
             return
-        # 排序键：(是否.part, mtime) —— .part 优先、更旧的优先
-        entries.sort(key=lambda e: (0 if e.endswith(".part") else 1, os.path.getmtime(e)))
+        # 排序键：(是否为 .part, mtime) —— 已完成文件优先删、更旧的优先；
+        # .part 排最后，避免配额清理打断正在进行的并发下载。
+        entries.sort(key=lambda e: (1 if e.endswith(".part") else 0, os.path.getmtime(e)))
         for e in entries:
             if total <= limit:
                 break
