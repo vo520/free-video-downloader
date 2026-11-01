@@ -22,7 +22,23 @@ if not JWT_SECRET:
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72
 
+# 演示（访客）账号：前端在未登录时用它静默建立会话，让访客也能用 AI 总结等需要登录的能力。
+# 该账号是所有访客共用的公共账号，凭据写在源码里 —— 因此它的历史记录不能当作用户数据使用。
+DEMO_EMAIL = "demo@local.com"
+
 security = HTTPBearer(auto_error=False)
+
+
+def is_shared_demo_user(user: dict | None) -> bool:
+    """判断 user 是否为公共演示账号。
+
+    前端 api/auth.js#ensureDefaultUser 会在未登录时静默用该账号登录，
+    所有访客因此落在同一个 user_id 上。若把访客的解析/下载/总结记录写进这个账号，
+    等于把每个人的记录公开给任何知道演示凭据的人（凭据就在源码里），
+    且访客自己也看不到（云端历史抽屉仅对登录用户挂载）。
+    因此共享账号只用于"借用登录态"，不承载用户历史。
+    """
+    return bool(user) and (user.get("email") or "").lower() == DEMO_EMAIL
 
 
 def hash_password(password: str) -> str:

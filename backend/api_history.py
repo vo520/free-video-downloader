@@ -22,10 +22,13 @@ def list_history(
     type: str | None = Query(None, description="parse | download | summary"),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    search: str | None = Query(None, description="按标题 / 平台 / 链接模糊匹配"),
 ):
     # 同步函数（FastAPI 放入线程池）：内部是同步 SQLite 查询，
     # 写成 async def 会在事件循环里执行同步 IO，阻塞其它请求。
-    rows, total = get_history(user["id"], htype=type, limit=limit, offset=offset)
+    rows, total = get_history(
+        user["id"], htype=type, limit=limit, offset=offset, search=search
+    )
     return {"success": True, "data": rows, "total": total}
 
 

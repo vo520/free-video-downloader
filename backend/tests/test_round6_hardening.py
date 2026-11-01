@@ -164,3 +164,89 @@ def test_parse_log_failure_does_not_break_parse(tmp_path, monkeypatch):
 
     # 不抛异常即通过
     main._record_parse_log("https://example.com/v", None, False, 10, "", "boom")
+
+
+# ===== 历史搜索下推服务端 =====
+
+
+def test_history_search_filters_on_server(tmp_path, monkeypatch):
+    """历史搜索必须由服务端过滤，覆盖全量历史而不是只覆盖已加载的一页。"""
+    import database
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    uid = database.create_user("search@example.com", "x")["id"]
+
+    for i in range(5):
+        database.add_history(
+            uid,
+            "parse",
+            video_url=f"https://example.com/v{i}",
+            title=f"标题{i}",
+            platform="youtube",
+        )
+
+    rows, total = database.get_history(uid, search="标题3")
+    assert total == 1
+    assert rows[0]["title"] == "标题3"
+
+    # 按平台匹配
+    _, total = database.get_history(uid, search="youtube")
+    assert total == 5
+
+    # 无匹配
+    _, total = database.get_history(uid, search="不存在的关键词")
+    assert total == 0
+
+
+def test_history_search_escapes_like_wildcards(tmp_path, monkeypatch):
+    """搜索关键词里的 LIKE 通配符必须被转义，否则搜 '%' 会匹配全部记录。"""
+    import database
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    uid = database.create_user("wildcard@example.com", "x")["id"]
+    database.add_history(
+        uid, "parse", video_url="https://example.com/v1", title="普通标题", platform="youtube"
+    )
+
+    _, total = database.get_history(uid, search="%")
+    assert total == 0
+
+    # 下划线是单字符通配符，未转义时 "标_" 会命中 "普通标题"
+    _, total = database.get_history(uid, search="标_")
+    assert total == 0
+
+
+# ===== 公共演示账号不承载用户历史 =====
+
+
+def test_shared_demo_user_is_detected():
+    """is_shared_demo_user 必须只命中公共演示账号。"""
+    from auth import DEMO_EMAIL, is_shared_demo_user
+
+    assert is_shared_demo_user({"id": 1, "email": DEMO_EMAIL}) is True
+    assert is_shared_demo_user({"id": 2, "email": "demo@LOCAL.com"}) is True
+    assert is_shared_demo_user({"id": 3, "email": "real@example.com"}) is False
+    assert is_shared_demo_user(None) is False
+    assert is_shared_demo_user({}) is False
+
+
+def test_demo_account_history_is_not_written(tmp_path, monkeypatch):
+    """访客解析不得写入公共演示账号的历史（凭据公开 = 等于把所有访客记录公开）。"""
+    import database
+    import main
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))
+    database.init_db()
+    uid = database.create_user("demo@local.com", "x")["id"]
+
+    user = {"id": uid, "email": "demo@local.com"}
+    assert main.is_shared_demo_user(user) is True
+
+    # 模拟 /api/parse 的写入分支：演示账号应被守卫拦下
+    if user and not main.is_shared_demo_user(user):
+        database.add_history(user["id"], "parse", video_url="https://x.com/v", title="t")
+
+    _, total = database.get_history(uid)
+    assert total == 0

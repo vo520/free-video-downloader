@@ -55,7 +55,7 @@
           </div>
         </div>
 
-        <!-- 搜索（按标题/平台/链接前端模糊过滤，复用已拉全量的 items，无需打后端） -->
+        <!-- 搜索（关键词下推服务端，覆盖全量历史；300ms 防抖避免逐字符打后端） -->
         <div class="px-5 py-2 border-b border-border-light">
           <div class="relative">
             <input
@@ -64,7 +64,15 @@
               type="text"
               placeholder="搜索标题 / 平台 / 链接"
               aria-label="搜索历史记录"
-              class="w-full pl-3 pr-10 py-2 text-sm rounded-lg bg-surface-muted border border-transparent focus:border-primary focus:bg-white outline-none transition-colors"
+              class="w-full pr-10 py-2 text-sm rounded-lg bg-surface-muted border border-transparent focus:border-primary focus:bg-white outline-none transition-colors"
+              :class="searching ? 'pl-8' : 'pl-3'"
+            />
+            <!-- 搜索中提示：放在输入框左侧，避免与「清除」按钮抢位置 -->
+            <span
+              v-if="searching"
+              class="absolute! left-2.5! top-1/2! -translate-y-1/2! w-3.5! h-3.5! rounded-full! border-2! border-primary/30! border-t-primary! animate-spin"
+              role="status"
+              aria-label="搜索中"
             />
             <BaseButton
               v-if="search"
@@ -79,6 +87,8 @@
               </svg>
             </BaseButton>
           </div>
+          <!-- 搜索失败：不覆盖列表，单独提示 -->
+          <p v-if="searchError" class="mt-2 text-xs text-error-text">{{ searchError }}</p>
         </div>
 
         <!-- 类型筛选 -->
@@ -144,7 +154,7 @@
             size="md"
             variant="empty"
             :title="items.length === 0 ? '暂无记录' : '没有匹配的搜索结果'"
-            :desc="items.length === 0 ? '解析一次视频试试' : (search.trim() && hasMore ? '仅搜索已加载部分，可加载更多后重试' : '')"
+            :desc="items.length === 0 ? '解析一次视频试试' : '换个关键词试试，搜索覆盖全部历史记录'"
           />
 
           <div
@@ -285,18 +295,69 @@ const tabCounts = computed(() => {
   return c
 })
 
-// 打开时一次性拉全量，按 tab + 关键词在前端过滤，避免每次切 tab/搜索都打后端（切换即时、省请求）。
+// 搜索：关键词下推到服务端，保证覆盖全量历史。
+// 原实现只在「已加载的一页（100 条）」里做本地过滤，历史一多就搜不到旧记录。
+const searchResults = ref([])
+const searching = ref(false)
+const searchError = ref('')
+let searchTimer = null
+// 搜索请求序号：只采纳最后一次请求的结果，避免慢请求覆盖新关键词的结果
+let searchSeq = 0
+
+async function runSearch(keyword) {
+  const kw = keyword.trim()
+  if (!kw) {
+    searchResults.value = []
+    searchError.value = ''
+    searching.value = false
+    return
+  }
+  const seq = ++searchSeq
+  searching.value = true
+  searchError.value = ''
+  try {
+    const { items: list } = await fetchHistory({
+      type: activeTab.value === 'all' ? null : activeTab.value,
+      limit: PAGE_SIZE,
+      offset: 0,
+      search: kw,
+    })
+    if (seq !== searchSeq) return // 已有更新的搜索请求，丢弃本次结果
+    searchResults.value = list
+  } catch (e) {
+    if (seq !== searchSeq) return
+    searchError.value = getApiError(e, '搜索失败')
+    searchResults.value = []
+  } finally {
+    if (seq === searchSeq) searching.value = false
+  }
+}
+
+// 关键词变化：防抖 300ms 后请求服务端
+watch(search, (kw) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (!kw.trim()) {
+    // 清空关键词：丢弃在途请求结果，回到本地列表
+    searchSeq++
+    searchResults.value = []
+    searchError.value = ''
+    searching.value = false
+    return
+  }
+  searchTimer = setTimeout(() => runSearch(kw), 300)
+})
+
+// 切 tab 时若处于搜索态，用新的分类条件重新查询
+watch(activeTab, () => {
+  if (search.value.trim()) runSearch(search.value)
+})
+
+// 搜索态下由服务端返回结果（已按类型过滤）；非搜索态用本地已加载列表过滤。
 const filteredItems = computed(() => {
   const kw = search.value.trim().toLowerCase()
+  if (kw) return searchResults.value
   let list = items.value
   if (activeTab.value !== 'all') list = list.filter((x) => x.type === activeTab.value)
-  if (kw) {
-    list = list.filter((x) =>
-      (x.title && x.title.toLowerCase().includes(kw)) ||
-      (x.platform && x.platform.toLowerCase().includes(kw)) ||
-      (x.video_url && x.video_url.toLowerCase().includes(kw))
-    )
-  }
   return list
 })
 

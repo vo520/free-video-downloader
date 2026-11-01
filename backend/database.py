@@ -246,8 +246,13 @@ def add_history(user_id, htype, video_url='', title='', platform='', thumbnail='
         return None
 
 
-def get_history(user_id, htype=None, limit=50, offset=0):
-    """读取当前用户的历史记录，按时间倒序。返回 (rows, total)。"""
+def get_history(user_id, htype=None, limit=50, offset=0, search=None):
+    """读取当前用户的历史记录，按时间倒序。返回 (rows, total)。
+
+    search：按标题 / 平台 / 链接做模糊匹配（服务端过滤）。
+    前端原先只能在「已加载的一页」里做本地过滤，历史超过 100 条时搜索形同虚设，
+    这里把过滤下推到 SQL，保证搜索覆盖全量历史。
+    """
     if not user_id:
         return [], 0
     with get_db() as conn:
@@ -256,6 +261,18 @@ def get_history(user_id, htype=None, limit=50, offset=0):
         if htype:
             clauses.append("type = ?")
             params.append(htype)
+        keyword = (search or "").strip()
+        if keyword:
+            # 转义 LIKE 通配符：否则用户搜 "%" 会匹配全部记录、"_" 会变成单字符通配。
+            escaped = (
+                keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            like = f"%{escaped}%"
+            clauses.append(
+                "(title LIKE ? ESCAPE '\\' OR platform LIKE ? ESCAPE '\\' "
+                "OR video_url LIKE ? ESCAPE '\\')"
+            )
+            params.extend([like, like, like])
         where = " AND ".join(clauses)
         total = conn.execute(
             f"SELECT COUNT(*) AS c FROM history WHERE {where}", params

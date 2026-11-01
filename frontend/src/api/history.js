@@ -6,11 +6,13 @@ import request from '../utils/request'
  * @param {'parse'|'download'|'summary'|null} [opts.type]
  * @param {number} [opts.limit]
  * @param {number} [opts.offset]
+ * @param {string} [opts.search] 服务端模糊匹配（标题 / 平台 / 链接），覆盖全量历史
  * @returns {Promise<{items: Array, total: number}>}
  */
-export async function fetchHistory({ type = null, limit = 50, offset = 0 } = {}) {
+export async function fetchHistory({ type = null, limit = 50, offset = 0, search = '' } = {}) {
   const params = { limit, offset }
   if (type) params.type = type
+  if (search) params.search = search
   const { data } = await request.get('/history', { params })
   // 后端返回 { success: true, data: rows(数组), total }：
   //   total 在顶层信封（axios response.data.total），data 字段直接是数组，

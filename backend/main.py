@@ -22,7 +22,7 @@ DEFAULT_FORMAT_ID = "bestvideo+bestaudio/best"
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
 from database import init_db, add_history
-from auth import get_optional_user
+from auth import get_optional_user, is_shared_demo_user
 
 
 downloader = VideoDownloader()
@@ -299,7 +299,8 @@ async def parse_video(req: ParseRequest, user: dict | None = Depends(get_optiona
                 })
         # 已登录用户记录解析历史（best-effort；add_history 内部已吞异常并 warning，失败不影响主返回）。
         # snapshot=result 存完整 videoData（含 formats/duration/uploader 等），使历史回看不必重跑 yt-dlp。
-        if user:
+        # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        if user and not is_shared_demo_user(user):
             add_history(
                 user["id"], "parse",
                 video_url=url,
@@ -381,7 +382,8 @@ async def download_video(req: DownloadRequest, user: dict | None = Depends(get_o
             raise HTTPException(status_code=500, detail="下载的文件不存在")
 
         # 已登录用户记录下载历史（best-effort；add_history 内部已吞异常并 warning，失败不影响主返回）
-        if user:
+        # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        if user and not is_shared_demo_user(user):
             add_history(
                 user["id"], "download",
                 video_url=url,

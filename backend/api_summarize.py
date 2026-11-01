@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
-from auth import get_optional_user
+from auth import get_optional_user, is_shared_demo_user
 from database import check_and_increment_summary, check_summary_quota, FREE_DAILY_SUMMARY_LIMIT, add_history
 
 router = APIRouter(prefix="/api", tags=["AI 总结"])
@@ -197,7 +197,8 @@ async def _summarize_stream(req: SummarizeRequest, user: dict | None, request: R
 
         # best-effort：已登录用户记录总结历史，存全文供回看；失败不影响 SSE 主流程。
         # add_history 内部已吞异常并 warning，此处无需再包 try/except。
-        if user:
+        # 公共演示账号（访客共用）不写入：它的凭据公开，写进去等于把所有访客的记录公开。
+        if user and not is_shared_demo_user(user):
             add_history(
                 user["id"], "summary",
                 video_url=req.url,

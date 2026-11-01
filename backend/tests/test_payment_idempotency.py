@@ -18,9 +18,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # backend/
 
 import database
 
-database.DB_PATH = _TMP_DB
-database.get_db_path = lambda: _TMP_DB
-
 # 2) 导入支付模块（需在 mock stripe 之前；api_payment 内部 import stripe）
 import api_payment
 
@@ -32,9 +29,6 @@ _EVENT = {}
 
 def _fake_construct_event(payload, sig_header, secret):
     return _EVENT
-
-
-stripe.Webhook.construct_event = _fake_construct_event
 
 
 # 4) 最小请求桩：实现 request.body() 与 request.headers.get()
@@ -120,6 +114,17 @@ async def _run():
 
 
 if __name__ == "__main__":
+    # 只有直接运行时才把 database 指向临时库、并替换验签函数。
+    #
+    # 原实现把这两句放在模块顶层：pytest 收集该模块时会执行它们，
+    # 而 database.get_db_path 被永久替换后，同一会话里后续所有测试再重定向
+    # database.DB_PATH 都会失效（get_db_path 不再读该全局），
+    # 表现为 test_round6_hardening.py 报 "UNIQUE constraint failed: users.email"。
+    # stripe 验签 mock 同理，放进 __main__ 避免污染同会话的其他用例。
+    database.DB_PATH = _TMP_DB
+    database.get_db_path = lambda: _TMP_DB
+    stripe.Webhook.construct_event = _fake_construct_event
+
     import asyncio
 
     asyncio.run(_run())

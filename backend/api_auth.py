@@ -10,6 +10,7 @@ from auth import (
     validate_email,
     validate_password,
     verify_password,
+    DEMO_EMAIL,
 )
 from database import create_user, get_user_by_email, get_db
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # 演示账号：前端在未登录时自动用它登录（utils/request.js#ensureDefaultUserLazy），
 # 让访客能直接体验云端历史、缓存等需要登录的功能。
-DEMO_EMAIL = "demo@local.com"
+# 常量定义在 auth.py（与 is_shared_demo_user 同源），此处通过 import 引入。
 # 演示账号的 VIP 只给短时体验额度（1 天），每次登录/注册时重置。
 # 原实现给 1 年，导致所有未注册访客都是 VIP：免费 3 次/日配额与付费墙
 # 对全部用户失效，VIP 付费只剩"AI 总结"一层名义门槛。
