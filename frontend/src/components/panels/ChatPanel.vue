@@ -187,6 +187,11 @@ import BaseButton from '../ui/BaseButton.vue'
             try {
               const parsed = JSON.parse(data)
               if (parsed.need_login) {
+                // 必须在该分支写入终止文案并立即渲染：
+                // loading 已在上面被置 false，finally 的兜底（if (aiMessage.loading)）不会执行，
+                // 若这里直接 return，列表会永久留下一条空白的 assistant 气泡。
+                aiMessage.content = '❌ 请先登录后再提问'
+                flushRenderedNow(aiIndex)
                 emit('need-login')
                 return
               }

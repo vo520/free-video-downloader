@@ -478,6 +478,26 @@ function testSourceContracts() {
     'VideoResult 切换格式后未清空 fetchedUrl（预览仍播放上一格式的直链）'
   )
 
+  // ChatPanel 的 need_login 分支必须写入终止文案并立即渲染：
+  // loading 在此之前已被置 false，finally 的兜底（if (aiMessage.loading)）不会执行，
+  // 直接 return 会在问答列表里永久留下一条空白的 assistant 气泡。
+  const chatCode = stripComments(read('components/panels/ChatPanel.vue'))
+  const needLoginIdx = chatCode.indexOf('parsed.need_login')
+  assert.ok(needLoginIdx !== -1, 'ChatPanel 缺少 need_login 分支')
+  const needLoginBlock = chatCode.slice(needLoginIdx, needLoginIdx + 400)
+  assert.ok(
+    /aiMessage\.content\s*=/.test(needLoginBlock),
+    'ChatPanel 的 need_login 分支未写入提示文案（会留下永久空白的 assistant 气泡）'
+  )
+  assert.ok(
+    /flushRenderedNow\(aiIndex\)/.test(needLoginBlock),
+    'ChatPanel 的 need_login 分支未立即渲染（提示文案不会显示）'
+  )
+  assert.ok(
+    needLoginBlock.indexOf('flushRenderedNow(aiIndex)') < needLoginBlock.indexOf("emit('need-login')"),
+    'ChatPanel 的 need_login 分支必须先渲染再 emit，否则父组件弹窗后气泡仍为空'
+  )
+
   // toast 入场动画只能做纵向位移：左下角全局 toast 没有水平位移类，
   // keyframe 里带 -50% 会让它每次弹出先横移半个自身宽度再瞬间跳回。
   // 顶部居中 toast 的水平居中由容器上的 -translate-x-1/2 负责，动画必须挂在内层卡片。
