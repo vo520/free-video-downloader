@@ -393,24 +393,30 @@ class VideoCacheManager:
         
         try:
             stats = self.get_cache_stats()
-            
-            recent_videos = self.db.get_videos(limit=100)
-            
+
+            # 统计全表，而不是 get_videos(limit=100)：后者按 created_at DESC 只取最新
+            # 100 条，数据量超过 100 时更老的记录进不了任何年龄桶，长龄占比被低估，
+            # 「建议缩短长龄缓存 TTL」的推荐也就永远不触发。
+            created_at_list = self.db.get_created_at_list()
+
             by_age = {
                 "lt_1d": 0,
                 "1d_7d": 0,
                 "7d_30d": 0,
                 "gt_30d": 0
             }
-            
+
             # 必须用 UTC tz：created_at 由 save_video 写入时已带 timezone.utc，
             # naive datetime 减 aware datetime 会抛 TypeError，本应被 try/except 兜底跳过，
             # 实际导致整批 by_age 计数偏差。统一用 tz-aware 比对。
             now = datetime.now(timezone.utc)
-            
-            for video in recent_videos:
+
+            for created_at_str in created_at_list:
                 try:
-                    created_at = datetime.fromisoformat(video.get('created_at', now.isoformat()))
+                    created_at = datetime.fromisoformat(created_at_str)
+                    # 兼容早期无时区的存量记录：按 UTC 解释，避免整条被跳过而不计入任何桶
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
                     age_days = (now - created_at).days
                     
                     if age_days < 1:

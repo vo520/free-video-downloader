@@ -475,6 +475,18 @@ class VideoCacheDB:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_created_at_list(self) -> list[str]:
+        """返回全表 created_at（供生命周期报告的年龄分布统计）。
+
+        不能复用 get_videos(limit=100)：后者按 created_at DESC 只取最新 100 条，
+        当总记录超过 100 时，更老的记录不会进入任何年龄桶，长龄分布被系统性低估。
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT created_at FROM video_cache WHERE created_at IS NOT NULL"
+            ).fetchall()
+        return [r["created_at"] for r in rows]
+
     def count_videos(
         self,
         cache_status: str | None = None,
