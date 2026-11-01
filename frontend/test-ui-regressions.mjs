@@ -395,6 +395,42 @@ function testSourceContracts() {
     !/nextTick/.test(heroCode),
     'HeroSection 仍依赖 nextTick 设置粘贴提示（微任务早于 input，会被清零）'
   )
+
+  // VideoSummary 卸载时必须主动复位 loading 并阻止「await 之后继续干活」：
+  //  - 不复位 → 宿主 App 的 summarizing 永久为 true，「AI 总结」按钮永久 loading 不可点；
+  //  - 不拦 loadQuota 的后续流程 → 配额请求回来时组件已销毁，仍会发起 SSE 白扣免费额度。
+  const summaryCode = stripComments(read('components/VideoSummary.vue'))
+  const summaryUnmount = summaryCode.match(/onBeforeUnmount\(\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}\)/)
+  assert.ok(summaryUnmount, 'VideoSummary 缺少 onBeforeUnmount')
+  assert.ok(
+    /unmounted\s*=\s*true/.test(summaryUnmount[1]),
+    'VideoSummary 卸载时未设置 unmounted 标记（异步回调仍会作用到已销毁实例）'
+  )
+  assert.ok(
+    /emit\('loading-change',\s*false\)/.test(summaryUnmount[1]),
+    'VideoSummary 卸载时未直接 emit loading-change(false)（watch 已被销毁，宿主 summarizing 会卡死）'
+  )
+  assert.ok(
+    (summaryCode.match(/if\s*\(unmounted\)\s*return/g) || []).length >= 2,
+    'VideoSummary 的 loadQuota / startSummarize 缺少卸载守卫（销毁后仍会发起总结请求）'
+  )
+
+  // VideoResult 的画中画切换：当前元素已在 PiP 时必须走退出分支，
+  // 否则二次点击会重复 requestPictureInPicture 被拒绝 → 误报「不支持画中画」且退不出去。
+  const resultCode = stripComments(read('components/VideoResult.vue'))
+  const togglePip = resultCode.match(/function togglePip\(\)\s*\{([\s\S]*?)\n\}/)
+  assert.ok(togglePip, 'VideoResult 缺少 togglePip')
+  const pipBody = togglePip[1]
+  const sameElIdx = pipBody.indexOf('document.pictureInPictureElement === v')
+  const requestIdx = pipBody.indexOf('requestPictureInPicture')
+  assert.ok(
+    sameElIdx !== -1 && sameElIdx < requestIdx,
+    'VideoResult 的 togglePip 未在请求画中画之前判断「当前元素已在画中画中」'
+  )
+  assert.ok(
+    /exitPictureInPicture/.test(pipBody.slice(sameElIdx, requestIdx === -1 ? undefined : requestIdx)),
+    'VideoResult 的 togglePip 在已处于画中画时未调用 exitPictureInPicture（无法退出）'
+  )
 }
 
 // ============================ 主流程 ============================

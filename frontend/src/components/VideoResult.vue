@@ -302,6 +302,13 @@ function togglePip() {
   const v = videoElement.value
   if (!v) return
   try {
+    // 当前元素已在画中画中：必须走退出分支。
+    // 缺这个分支时重复点击会再次 requestPictureInPicture，被浏览器拒绝后
+    // 误报「当前浏览器不支持画中画」，而按钮文案已是「退出画中画」却退不出去。
+    if (document.pictureInPictureElement === v) {
+      document.exitPictureInPicture().catch(() => {})
+      return
+    }
     if (document.pictureInPictureElement && document.pictureInPictureElement !== v) {
       document.exitPictureInPicture().catch(() => {})
     } else if (v.requestPictureInPicture) {

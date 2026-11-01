@@ -148,6 +148,11 @@ import BaseButton from './ui/BaseButton.vue'
   // 避免旧 chunk 继续接收并污染新状态（race condition）。
   let currentController = null
 
+  // 卸载标记：onMounted 里 loadQuota() 是异步的，用户在配额请求返回前换视频/回看历史时
+  // 组件已销毁，await 之后仍会继续 startSummarize()（在死实例上跑 SSE、白扣免费额度）。
+  // 所有「await 之后还要继续干活」的路径都必须先检查该标记。
+  let unmounted = false
+
   // 顶层 SSE 状态：4 个 panel 通过 props 共享，按需渲染
   const summaryText = ref('')
   const subtitleData = ref({ segments: [], has_subtitle: false, full_text: '' })
@@ -169,6 +174,8 @@ import BaseButton from './ui/BaseButton.vue'
   async function loadQuota() {
     try {
       const data = await fetchSummaryQuota()
+      // 配额请求返回前组件已卸载：不再下发任何状态、更不能触发 startSummarize
+      if (unmounted) return
       if (!data) {
         quotaGate.value = { status: 'error' }
         return
@@ -193,6 +200,8 @@ import BaseButton from './ui/BaseButton.vue'
   }
 
   async function startSummarize() {
+    // 实例已销毁（典型：配额查询期间切走视频）：绝不再发起新的 SSE 请求
+    if (unmounted) return
     // 用户已确认（或 VIP 自动触发），闸门让位给真实内容
     quotaGate.value = null
     // 先中断上一次可能未完成的总结请求，避免旧 chunk 持续触发回调污染新状态
@@ -277,6 +286,15 @@ import BaseButton from './ui/BaseButton.vue'
 
   // 组件卸载时中断未完成的总结请求，避免回调在已销毁组件上更新状态
   onBeforeUnmount(() => {
+    unmounted = true
     if (currentController) currentController.abort()
+    // 卸载时若仍在 loading，必须主动通知宿主复位，否则 App 的 summarizing 会永久为 true，
+    // 「AI 总结」按钮带着 loading 状态永久禁用（BaseButton 会用 loading 直接禁用点击）。
+    // 注意：不能依赖上面的 watch(loading)——组件销毁时它的调度任务会被一并停掉，
+    // flush 回调不保证执行，所以这里直接 emit。
+    if (loading.value) {
+      loading.value = false
+      emit('loading-change', false)
+    }
   })
 </script>
