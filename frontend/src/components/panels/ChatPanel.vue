@@ -197,7 +197,7 @@ import BaseButton from '../ui/BaseButton.vue'
             flushRenderedNow(aiIndex)
           },
         },
-        currentChatController.signal
+        controller.signal
       )
     } catch (err) {
       // 用户主动中断不视为错误
@@ -207,6 +207,14 @@ import BaseButton from '../ui/BaseButton.vue'
       aiMessage.content = '❌ 请求失败: ' + err.message
       flushRenderedNow(aiIndex)
     } finally {
+      // SSE 流被代理截断时可能收不到 done/error 事件，此时 await 已正常返回，
+      // 若不复位会永久转圈（输入框一直 disabled，用户无法再提问）。这里兜底复位。
+      if (aiMessage.loading) {
+        aiMessage.loading = false
+        if (!aiMessage.content) aiMessage.content = '❌ 回答中断，请重试'
+        flushRenderedNow(aiIndex)
+      }
+      chatLoading.value = false
       // 只清空本轮自己的 controller：若新提问已接管（currentChatController 指向新 controller），
       // 本 finally 不应清掉它，否则下一轮 sendQuestion 无法再 abort 新请求。
       if (currentChatController === controller) currentChatController = null

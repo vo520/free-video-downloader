@@ -157,15 +157,19 @@ export function useHistory({ showToast, isAuthed } = {}) {
   /** 清空历史。返回是否成功（宿主据此决定是否同步清空 HistoryDrawer 列表）。 */
   async function clearHistory() {
     if (hasAuthedUser()) {
+      let deleted = 0
       try {
-        await clearMyHistory()
+        deleted = await clearMyHistory()
       } catch (err) {
         if (showToast) showToast('清空失败，请稍后重试', 'error')
         return false
       }
-      const n = history.value.length
       history.value = []
-      if (showToast) showToast(n > 0 ? `已清空 ${n} 条记录` : '已清空', 'success')
+      // 用服务端返回的实际删除条数（跨 parse/download/summary 全部类型），
+      // 原先用本地 parse 列表长度报数，与服务端删除量不一致会误导用户。
+      if (showToast) {
+        showToast(deleted > 0 ? `已清空 ${deleted} 条记录` : '已清空', 'success')
+      }
       return true
     }
     history.value = []

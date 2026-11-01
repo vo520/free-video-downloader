@@ -225,6 +225,12 @@ watch(
         notified.value.delete(t.id)
       }
     })
+    // 首次渲染（restore 尚未完成，prev 为空）只做预标记、不提示：
+    // 否则刷新页面会把持久化的 done 任务当成"新完成"刷屏。
+    if (!prev || prev.length === 0) {
+      now.forEach((t) => notified.value.add(t.id))
+      return
+    }
     now.forEach((t) => {
       if (notified.value.has(t.id)) return
       if (t.status === 'done') {
@@ -240,7 +246,9 @@ watch(
 )
 
 onMounted(() => {
-  // 预标记已存在任务，避免刷新后对已持久化任务重复提示
+  // 预标记已存在任务，避免刷新后对已持久化任务重复提示。
+  // 注意：子组件 onMounted 早于 App 的 onMounted，此时 restore() 可能尚未执行，
+  // state.tasks 仍为空；真正的预标记由上面 watcher 的首次分支完成。
   state.tasks.forEach((t) => notified.value.add(t.id))
 })
 </script>

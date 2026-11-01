@@ -23,7 +23,9 @@
     </div>
 
     <!-- 内容区域：4 个 panel 自包含交互逻辑 -->
-    <div class="p-5 sm:p-6 min-h-[400px] flex-1 overflow-y-auto">
+    <!-- :key 绑定 activeTab：切换 tab 时重建内容容器，滚动位置回到顶部。
+         不加 key 时会沿用上一个 tab 的滚动位置，切到短内容 tab 时一片空白。 -->
+    <div :key="activeTab" class="p-5 sm:p-6 min-h-[400px] flex-1 overflow-y-auto">
       <SummaryPanel
         v-if="activeTab === 'summary'"
         :summary-text="summaryText"
@@ -162,6 +164,10 @@ import ChatPanel from './panels/ChatPanel.vue'
       loading.value = false
       showToast('总结请求失败: ' + err.message, 'error')
     } finally {
+      // SSE 流被代理截断时可能收不到 done/error 事件，此时 await 已正常返回，
+      // 若不复位 loading 会永久转圈（App 的 summarizing 也会一直为 true，
+      // 导致「AI 总结」按钮永久 loading 不可点）。这里兜底复位。
+      if (loading.value) loading.value = false
       if (currentController === controller) currentController = null
     }
   }

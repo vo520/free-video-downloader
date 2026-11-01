@@ -39,5 +39,7 @@ def remove_history(history_id: int, user: dict = Depends(get_current_user)):
 
 @router.post("/clear")
 def clear_my_history(user: dict = Depends(get_current_user)):
-    clear_history(user["id"])
-    return {"success": True, "message": "已清空历史记录"}
+    # 返回实际删除条数：前端原先用本地 parse 列表长度报「已清空 N 条」，
+    # 但服务端删的是全部类型（parse / download / summary），数量对不上会误导用户。
+    deleted = clear_history(user["id"])
+    return {"success": True, "message": "已清空历史记录", "deleted": deleted}

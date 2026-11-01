@@ -172,6 +172,49 @@ class VideoCacheDB:
                 );
                 """
             )
+            self._migrate_url_normalization(conn)
+
+    def _migrate_url_normalization(self, conn):
+        """把存量记录的 video_url / url_hash 重写为当前归一化口径。
+
+        背景：早期 _normalize_url 只小写 scheme/netloc（保留 www. 与 fragment），
+        与 history 表口径不同，导致同一视频在两表对不上。后来统一为
+        canonical_video_url（强制 https、去 www.、去 fragment、纯数字补全），
+        老记录的键值格式就与新代码不一致了 —— 用新口径查询会匹配不上。
+
+        归一化后撞到同一 URL 的多条记录会合并成一条（保留 id 最小的，
+        命中数累加、热门标记取或），再改写保留者的 video_url / url_hash。
+        顺序很关键：必须先删除重复行再改写保留者，否则改写时会撞上
+        UNIQUE(video_url) 约束，导致整个迁移回滚。
+        """
+        rows = conn.execute(
+            "SELECT id, video_url, url_hash, cache_hit_count, is_hot FROM video_cache ORDER BY id"
+        ).fetchall()
+        if not rows:
+            return
+
+        # 按归一化后的 URL 分组
+        groups: dict[str, list] = {}
+        for row in rows:
+            groups.setdefault(_normalize_url(row["video_url"]), []).append(row)
+
+        for new_url, group in groups.items():
+            keeper = group[0]  # id 最小的那条
+            if len(group) > 1:
+                total_hits = sum(r["cache_hit_count"] or 0 for r in group)
+                hot = 1 if any(r["is_hot"] for r in group) else 0
+                for r in group[1:]:
+                    conn.execute("DELETE FROM video_cache WHERE id = ?", (r["id"],))
+                conn.execute(
+                    "UPDATE video_cache SET cache_hit_count = ?, is_hot = ? WHERE id = ?",
+                    (total_hits, hot, keeper["id"]),
+                )
+            new_hash = _url_hash(keeper["video_url"])
+            if keeper["video_url"] != new_url or keeper["url_hash"] != new_hash:
+                conn.execute(
+                    "UPDATE video_cache SET video_url = ?, url_hash = ? WHERE id = ?",
+                    (new_url, new_hash, keeper["id"]),
+                )
 
     # ---------- 视频缓存 CRUD ----------
     # 核心字段（重复 URL 时仅更新这些列，cache_status / cache_hit_count / is_hot 保持原值）

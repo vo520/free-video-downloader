@@ -300,12 +300,17 @@ def delete_history(hid, user_id):
 
 
 def clear_history(user_id):
-    """清空当前用户全部历史。"""
+    """清空当前用户全部历史。返回实际删除的条数（0 表示无记录或未登录）。
+
+    原实现只返回布尔值，前端只能用本地列表长度报「已清空 N 条」，
+    而服务端删除的是全部类型（parse / download / summary），
+    两者数量不一致会让提示误导用户。
+    """
     if not user_id:
-        return False
+        return 0
     with get_db() as conn:
-        conn.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
-        return True
+        cur = conn.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
+        return cur.rowcount
 
 
 def check_summary_quota(user_id: int) -> tuple[bool, int]:

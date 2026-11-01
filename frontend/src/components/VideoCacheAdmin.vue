@@ -112,7 +112,13 @@
         <!-- 操作按钮 -->
         <BaseButton variant="primary" size="md" shape="square" @click="searchVideos">搜索</BaseButton>
         <BaseButton variant="outline" size="md" shape="square" @click="showExportDialog = true">导出数据</BaseButton>
-        <BaseButton variant="danger" size="md" shape="square" @click="cleanupExpired">清理过期</BaseButton>
+        <BaseButton
+          variant="danger"
+          size="md"
+          shape="square"
+          :disabled="cleaningUp"
+          @click="cleanupExpired"
+        >{{ cleaningUp ? '清理中…' : '清理过期' }}</BaseButton>
       </div>
     </div>
 
@@ -222,15 +228,17 @@
                       variant="ghost"
                       size="xs"
                       shape="square"
+                      :disabled="pendingActions.has(video.video_url)"
                       @click="markHot(video)"
                     >
-                      标热门
+                      {{ pendingActions.has(video.video_url) ? '处理中…' : '标热门' }}
                     </BaseButton>
                     <!-- 删除 -->
                     <BaseButton
                       variant="danger"
                       size="xs"
                       shape="square"
+                      :disabled="pendingActions.has(video.video_url)"
                       @click="deleteVideo(video)"
                     >
                       删除
@@ -314,8 +322,10 @@
       </div>
       <template #footer>
         <div class="flex justify-end gap-3 px-6 pb-6">
-          <BaseButton variant="outline" size="sm" shape="square" @click="showExportDialog = false">取消</BaseButton>
-          <BaseButton variant="primary" size="sm" shape="square" @click="exportData">导出</BaseButton>
+          <BaseButton variant="outline" size="sm" shape="square" :disabled="exporting" @click="showExportDialog = false">取消</BaseButton>
+          <BaseButton variant="primary" size="sm" shape="square" :disabled="exporting" @click="exportData">
+            {{ exporting ? '导出中…' : '导出' }}
+          </BaseButton>
         </div>
       </template>
     </BaseModal>
@@ -345,6 +355,11 @@ const stats = ref({})
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = 50
+// 进行中的行级操作（按 video_url 记录）：防止同一条记录被重复点击并发提交
+const pendingActions = ref(new Set())
+// 清理 / 导出为全局操作，用独立标志禁用按钮（避免连点触发多次请求）
+const cleaningUp = ref(false)
+const exporting = ref(false)
 
 const filters = ref({
   search: '',
@@ -467,6 +482,8 @@ async function copyUrl(url) {
 }
 
 async function markHot(video) {
+  if (pendingActions.value.has(video.video_url)) return
+  pendingActions.value.add(video.video_url)
   try {
     const response = await request.put(`/video-cache/videos/${encodeURIComponent(video.video_url)}/hot`, {}, { __silent: true })
     if (response.data.success) {
@@ -479,6 +496,8 @@ async function markHot(video) {
   } catch (error) {
     console.error('标记热门失败:', error)
     showToast(getApiError(error, '', OPERATION_FAILED_TIP), 'error')
+  } finally {
+    pendingActions.value.delete(video.video_url)
   }
 }
 
@@ -486,7 +505,9 @@ async function deleteVideo(video) {
   if (!confirm(`确定要删除 "${video.title}" 的缓存吗？`)) {
     return
   }
-  
+  if (pendingActions.value.has(video.video_url)) return
+  pendingActions.value.add(video.video_url)
+
   try {
     const response = await request.delete(`/video-cache/videos/${encodeURIComponent(video.video_url)}`, { __silent: true })
     if (response.data.success) {
@@ -504,6 +525,8 @@ async function deleteVideo(video) {
   } catch (error) {
     console.error('删除失败:', error)
     showToast(getApiError(error, '', DELETE_FAILED_TIP), 'error')
+  } finally {
+    pendingActions.value.delete(video.video_url)
   }
 }
 
@@ -511,6 +534,8 @@ async function cleanupExpired() {
   if (!confirm('确定要清理所有过期缓存吗？')) {
     return
   }
+  if (cleaningUp.value) return
+  cleaningUp.value = true
 
   try {
     const response = await request.post('/video-cache/cleanup', {}, { __silent: true })
@@ -526,10 +551,14 @@ async function cleanupExpired() {
   } catch (error) {
     console.error('清理失败:', error)
     showToast(getApiError(error, '', CLEANUP_FAILED_TIP), 'error')
+  } finally {
+    cleaningUp.value = false
   }
 }
 
 async function exportData() {
+  if (exporting.value) return
+  exporting.value = true
   try {
     const params = {}
 
@@ -555,6 +584,8 @@ async function exportData() {
   } catch (error) {
     console.error('导出失败:', error)
     showToast('导出失败', 'error')
+  } finally {
+    exporting.value = false
   }
 }
 

@@ -60,7 +60,7 @@
       <ul v-if="items.length" class="mt-4 space-y-2">
         <li
           v-for="item in items"
-          :key="item.url"
+          :key="item.uid"
           class="flex items-center gap-3 px-4 py-3 rounded-xl border border-border-light hover:border-primary/40 transition-all"
         >
           <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
@@ -115,6 +115,21 @@
             </svg>
             下载
           </BaseButton>
+
+          <!-- 单条重试：失败项不必整批重来 -->
+          <BaseButton
+            v-if="item.status === 'error'"
+            @click="retryOne(item)"
+            variant="ghost"
+            size="sm"
+            class="!shrink-0 !inline-flex !items-center !gap-1.5 !h-8 !px-3 !rounded-lg !text-xs !font-medium !text-primary"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            重试
+          </BaseButton>
         </li>
       </ul>
     </div>
@@ -149,7 +164,8 @@ watch(
 )
 
 const urlsText = ref(props.seed || '')
-const items = ref([]) // {url, status, data, error, selectedFormat}
+const items = ref([]) // {uid, url, status, data, error, selectedFormat}
+let uidSeq = 0
 const parsing = ref(false)
 const downloadingAll = ref(false)
 const dragActive = ref(false)
@@ -194,7 +210,10 @@ async function parseAll() {
   const urls = validUrls.value
   if (!urls.length) return
   parsing.value = true
+  // uid 而非 url 作 key：批量里可能有重复 URL，用 url 作 key 会产生重复 key，
+  // Vue 会告警且复用错误的 DOM（状态显示串行）。
   items.value = urls.map((url) => ({
+    uid: `${Date.now()}-${++uidSeq}`,
     url,
     status: 'parsing',
     data: null,
@@ -231,6 +250,30 @@ async function parseAll() {
     showToast(`批量解析完成：成功 ${ok} 个，失败 ${fail} 个`, fail ? 'info' : 'success')
   } finally {
     parsing.value = false
+  }
+}
+
+/** 单条重试：只重解析这一条，失败时无需整批重来。 */
+async function retryOne(item) {
+  if (item.status === 'parsing') return
+  item.status = 'parsing'
+  item.error = ''
+  item.data = null
+  item.selectedFormat = ''
+  try {
+    const res = await parseVideo(item.url)
+    if (res.success) {
+      item.data = res.data
+      item.selectedFormat = pickDefaultFormat(res.data)
+      item.status = 'done'
+      showToast('重试成功', 'success')
+    } else {
+      item.status = 'error'
+      item.error = extractErrorMsg(res.error, '解析失败')
+    }
+  } catch (err) {
+    item.status = 'error'
+    item.error = getApiError(err)
   }
 }
 

@@ -35,5 +35,7 @@ export async function deleteHistoryItem(historyId) {
  * 清空当前用户全部云端历史。
  */
 export async function clearMyHistory() {
-  await request.post('/history/clear')
+  // 返回服务端实际删除的条数（跨全部类型），供提示文案使用
+  const { data } = await request.post('/history/clear')
+  return data?.deleted ?? 0
 }

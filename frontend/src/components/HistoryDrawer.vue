@@ -101,7 +101,10 @@
         </div>
 
         <!-- 列表 -->
+        <!-- :key 绑定 activeTab：切换 tab 时重建列表容器，滚动位置回到顶部。
+             不加 key 时会沿用上一个 tab 的滚动位置，切到条数少的 tab 时一片空白。 -->
         <div
+          :key="activeTab"
           id="history-tabpanel"
           role="tabpanel"
           :aria-label="`当前显示：${tabs.find(t => t.key === activeTab)?.label || '全部'}历史`"
@@ -470,8 +473,8 @@ watch(() => props.removedIds, (ids) => {
   if (!ids || ids.length === 0) return
   const set = new Set(ids)
   // 只统计本次新增的 id（宿主是累积透传，重复的 id 不能重复扣 total）
-  const fresh = ids.filter((id) => !removedIdSet.value.has(id))
-  fresh.forEach((id) => removedIdSet.value.add(id))
+  const fresh = ids.filter((id) => !removedIdSet.has(id))
+  fresh.forEach((id) => removedIdSet.add(id))
   items.value = items.value.filter((x) => !set.has(x.id))
   total.value = Math.max(0, total.value - fresh.length)
 })

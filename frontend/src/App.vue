@@ -70,8 +70,12 @@
               <li
                 v-for="item in history"
                 :key="item.url"
-                class="group flex items-center gap-3 px-4 py-3 rounded-xl border border-border-light hover:border-primary/40 hover:bg-gray-50 transition-all cursor-pointer"
+                role="button"
+                tabindex="0"
+                class="group flex items-center gap-3 px-4 py-3 rounded-xl border border-border-light hover:border-primary/40 hover:bg-gray-50 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                 @click="handleShowHistoryRecord(item)"
+                @keydown.enter.prevent="handleShowHistoryRecord(item)"
+                @keydown.space.prevent="handleShowHistoryRecord(item)"
               >
                 <!-- 缩略图：有图用图，无图/加载失败统一降级占位（尺寸 w-14 h-10 与 HistoryDrawer 一致） -->
                 <VideoThumbnail :url="item.thumbnail" size="sm" />
@@ -200,6 +204,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span class="font-medium text-sm">{{ appToast.message }}</span>
+          <!-- 同一提示短时间重复触发时合并计数（toast 队列的合并逻辑） -->
+          <span
+            v-if="appToast.count > 1"
+            class="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold"
+          >×{{ appToast.count }}</span>
         </div>
       </div>
     </Teleport>
@@ -270,9 +279,17 @@ const { appToast, showToast } = useToast()
 // 能不依赖 Vue runtime 直接调用（util 文件不在 setup context 中）。
 window.__appToast = showToast
 let clearLocalHistory = () => {}
+// 下载任务中心（单例，统一管理并发/进度/取消）。
+// 提前实例化：登出回调里要用 downloadManager.clearAllTasks() 清掉上一账号的残留任务。
+const downloadManager = useDownloadManager()
 const { currentUser, restoreUser, handleAuthSuccess, handleLogout } = useAuth({
-  // 退出登录：自动清掉本地历史，避免下次未登录看到前任账号残留。
-  onLogout: () => clearLocalHistory(),
+  // 退出登录：自动清掉本地历史与下载任务，避免下次未登录看到前任账号残留。
+  // 下载任务存在 localStorage 全局键里、不按账号隔离，不清的话任务中心
+  // 仍会显示上一个账号的视频标题与链接。
+  onLogout: () => {
+    clearLocalHistory()
+    downloadManager.clearAllTasks()
+  },
 })
 // 把 handleLogout 挂到 window，让 request.js / auth.js 的 axios 拦截器在 token 过期（401）
 // 时同步清掉 currentUser 与历史记录，避免"界面显示已登录但 token 已清"的状态撕裂。
@@ -347,7 +364,6 @@ function onAuthSuccess(user) {
 }
 
 // ===== 下载任务中心（单例，统一管理并发/进度/取消）=====
-const downloadManager = useDownloadManager()
 const selectedFormatId = ref('')
 watch(currentUrl, () => {
   selectedFormatId.value = ''

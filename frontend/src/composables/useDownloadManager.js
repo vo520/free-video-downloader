@@ -38,6 +38,26 @@ function persist() {
   }
 }
 
+/**
+ * 清空全部下载任务（退出登录时调用）。
+ *
+ * 任务存在 localStorage 的全局键里，不按账号隔离：换账号 / 退出登录后，
+ * 任务中心仍会显示上一个账号的视频标题与链接。
+ */
+function clearAllTasks() {
+  // 中断进行中的请求，避免后台继续下载并往已清空的列表里写回状态
+  controllers.forEach((c) => {
+    try { c.abort() } catch { /* ignore */ }
+  })
+  controllers.clear()
+  state.tasks = []
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    /* 忽略持久化失败 */
+  }
+}
+
 // 启动时恢复历史任务用于展示；未完成项标记为已取消，避免刷新后自动重新下载。
 function restore() {
   try {
@@ -82,7 +102,9 @@ async function start(task) {
   const controller = new AbortController()
   controllers.set(task.id, controller)
 
-  const TIMEOUT_MS = 10 * 60 * 1000
+  // 超时必须大于后端 /api/download 的 1800s（30 分钟）上限 + 余量，
+  // 否则前端会先断开而服务端仍在下载，用户看到「下载超时」但文件其实下完了。
+  const TIMEOUT_MS = 35 * 60 * 1000
   const timeoutController = new AbortController()
   const timeoutId = setTimeout(() => {
     const err = new Error('download timeout')
@@ -284,6 +306,7 @@ export function useDownloadManager() {
     retry,
     remove,
     clearFinished,
+    clearAllTasks,
     openPanel,
     closePanel,
     togglePanel,

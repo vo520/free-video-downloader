@@ -94,7 +94,10 @@ function handleResponseError(error) {
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  // 超时必须大于后端处理上限，否则前端会先断开、后端仍在继续处理，
+  // 造成「用户看到超时失败、后端却已解析成功入库」的状态不一致。
+  // 后端 /api/parse 上限 120s，这里留 30s 余量。
+  timeout: 150000,
 })
 
 // 请求拦截：lazy 初始化默认用户 + 注入 Authorization（业务实例独占的业务请求会走这里）。
