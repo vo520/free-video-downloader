@@ -284,30 +284,34 @@ const tabs = [
   { key: 'summary', label: '总结' },
 ]
 
-// 各分类数量，用于 tab 上的计数徽标，无需额外请求。
-// 「全部」直接用后端真实 total（分页后已加载数 < 总记录数，用 loaded 会少算）；
-// 分类计数基于已加载 items（分页下为近似值，与「加载更多」提示一致，已在 UI 诚实标注）。
-const tabCounts = computed(() => {
-  const c = { all: total.value, parse: 0, download: 0, summary: 0 }
-  for (const it of items.value) {
-    if (c[it.type] !== undefined) c[it.type] += 1
-  }
-  return c
-})
-
 // 搜索：关键词下推到服务端，保证覆盖全量历史。
 // 原实现只在「已加载的一页（100 条）」里做本地过滤，历史一多就搜不到旧记录。
 const searchResults = ref([])
+const searchTotal = ref(0)
 const searching = ref(false)
 const searchError = ref('')
 let searchTimer = null
 // 搜索请求序号：只采纳最后一次请求的结果，避免慢请求覆盖新关键词的结果
 let searchSeq = 0
 
+// 各分类数量，用于 tab 上的计数徽标，无需额外请求。
+// 搜索态下以服务端命中的结果集为准（searchTotal 是匹配总数，分类计数从命中结果里数）；
+// 非搜索态沿用已加载 items（分页下为近似值，与「加载更多」提示一致，已在 UI 诚实标注）。
+const tabCounts = computed(() => {
+  const isSearching = !!search.value.trim()
+  const source = isSearching ? searchResults.value : items.value
+  const c = { all: isSearching ? searchTotal.value : total.value, parse: 0, download: 0, summary: 0 }
+  for (const it of source) {
+    if (c[it.type] !== undefined) c[it.type] += 1
+  }
+  return c
+})
+
 async function runSearch(keyword) {
   const kw = keyword.trim()
   if (!kw) {
     searchResults.value = []
+    searchTotal.value = 0
     searchError.value = ''
     searching.value = false
     return
@@ -316,18 +320,21 @@ async function runSearch(keyword) {
   searching.value = true
   searchError.value = ''
   try {
-    const { items: list } = await fetchHistory({
-      type: activeTab.value === 'all' ? null : activeTab.value,
+    // 不按类型过滤地查：一次拿到全部命中类型，分类计数与切 tab 都在这批结果内完成，
+    // 否则切到「解析」时其它类型的命中数会凭空消失。
+    const { items: list, total: t } = await fetchHistory({
       limit: PAGE_SIZE,
       offset: 0,
       search: kw,
     })
     if (seq !== searchSeq) return // 已有更新的搜索请求，丢弃本次结果
     searchResults.value = list
+    searchTotal.value = t ?? list.length
   } catch (e) {
     if (seq !== searchSeq) return
     searchError.value = getApiError(e, '搜索失败')
     searchResults.value = []
+    searchTotal.value = 0
   } finally {
     if (seq === searchSeq) searching.value = false
   }
@@ -340,6 +347,7 @@ watch(search, (kw) => {
     // 清空关键词：丢弃在途请求结果，回到本地列表
     searchSeq++
     searchResults.value = []
+    searchTotal.value = 0
     searchError.value = ''
     searching.value = false
     return
@@ -347,18 +355,12 @@ watch(search, (kw) => {
   searchTimer = setTimeout(() => runSearch(kw), 300)
 })
 
-// 切 tab 时若处于搜索态，用新的分类条件重新查询
-watch(activeTab, () => {
-  if (search.value.trim()) runSearch(search.value)
-})
-
-// 搜索态下由服务端返回结果（已按类型过滤）；非搜索态用本地已加载列表过滤。
+// 搜索态下由服务端返回结果，再按当前 tab 过滤；非搜索态用本地已加载列表过滤。
 const filteredItems = computed(() => {
   const kw = search.value.trim().toLowerCase()
-  if (kw) return searchResults.value
-  let list = items.value
-  if (activeTab.value !== 'all') list = list.filter((x) => x.type === activeTab.value)
-  return list
+  const list = kw ? searchResults.value : items.value
+  if (activeTab.value === 'all') return list
+  return list.filter((x) => x.type === activeTab.value)
 })
 
 // 是否还有未加载的历史（后端 total 与已加载条数比较）。搜索态下「加载更多」无意义（搜索仅覆盖已加载部分）。
