@@ -431,6 +431,33 @@ function testSourceContracts() {
     /exitPictureInPicture/.test(pipBody.slice(sameElIdx, requestIdx === -1 ? undefined : requestIdx)),
     'VideoResult 的 togglePip 在已处于画中画时未调用 exitPictureInPicture（无法退出）'
   )
+
+  // 切换清晰度后必须丢弃上一次换来的预览直链，否则新格式下点预览播的仍是旧画质。
+  assert.ok(
+    /watch\(selectedFormat,\s*\(\)\s*=>\s*\{[\s\S]*?fetchedUrl\.value\s*=\s*''/.test(resultCode),
+    'VideoResult 切换格式后未清空 fetchedUrl（预览仍播放上一格式的直链）'
+  )
+
+  // toast 入场动画只能做纵向位移：左下角全局 toast 没有水平位移类，
+  // keyframe 里带 -50% 会让它每次弹出先横移半个自身宽度再瞬间跳回。
+  // 顶部居中 toast 的水平居中由容器上的 -translate-x-1/2 负责，动画必须挂在内层卡片。
+  const appCode = stripComments(read('App.vue'))
+  assert.ok(
+    /delete window\.__appGuestSession/.test(appCode),
+    'App.vue 卸载时未清理 window.__appGuestSession（钩子残留并指向已销毁的 ref）'
+  )
+  const toastKeyframes = appCode.match(/@keyframes toast-in\s*\{[\s\S]*?\n\}/)
+  assert.ok(toastKeyframes, 'App.vue 缺少 toast-in 入场动画')
+  assert.ok(
+    !/translateX?\(\s*-50%/.test(toastKeyframes[0]),
+    'toast-in keyframe 含 -50% 水平位移（左下角全局 toast 会先横移再跳回）'
+  )
+  const paymentToastTag = appCode.match(/<div v-if="paymentToast"[^>]*>/)
+  assert.ok(paymentToastTag, '未找到支付 toast 容器')
+  assert.ok(
+    paymentToastTag[0].includes('-translate-x-1/2') && !paymentToastTag[0].includes('animate-toast-in'),
+    '支付 toast 的入场动画挂在了带 -translate-x-1/2 的容器上（水平位移会叠加）'
+  )
 }
 
 // ============================ 主流程 ============================

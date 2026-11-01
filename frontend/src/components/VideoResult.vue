@@ -358,6 +358,14 @@ const recommendedId = computed(() => {
 const selectedFormat = ref(recommendedId.value || props.video.formats?.[0]?.format_id || '')
 watch(selectedFormat, (value) => emit('format-change', value), { immediate: true })
 
+// 切换清晰度后丢弃上一次换来的预览直链：fetchedUrl 是按旧格式向后端换的，
+// 不清掉的话新格式下点预览会直接播旧画质（openPreview 见到 previewUrl 非空即直接展示）。
+watch(selectedFormat, () => {
+  if (!fetchedUrl.value) return
+  fetchedUrl.value = ''
+  showPreview.value = false
+})
+
 // 快捷预设
 const presets = [
   { type: 'best', label: '最高画质' },

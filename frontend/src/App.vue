@@ -196,9 +196,11 @@
 
     <!-- 支付成功/取消提示 -->
     <Teleport to="body">
-      <div v-if="paymentToast" class="fixed top-20 left-1/2 -translate-x-1/2 z-toast animate-toast-in">
+      <!-- 水平居中全靠容器的 -translate-x-1/2；入场动画挂在内层卡片上，
+           否则 keyframe 里的位移会与容器的 translate 叠加，toast 会先横向偏出再跳回。 -->
+      <div v-if="paymentToast" class="fixed top-20 left-1/2 -translate-x-1/2 z-toast">
         <div :class="[
-          'flex items-center gap-3 px-6 py-4 rounded-2xl shadow-xl border',
+          'flex items-center gap-3 px-6 py-4 rounded-2xl shadow-xl border animate-toast-in',
           paymentToast === 'success' ? 'bg-success-bg border-success/30 text-success-text' : 'bg-warning-bg border-warning/30 text-warning-text'
         ]">
           <svg v-if="paymentToast === 'success'" class="w-5 h-5 text-success shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -572,6 +574,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   delete window.__appToast
   delete window.__appForceLogout
+  // 与 __appToast / __appForceLogout 同源钩子：不清理会残留指向已销毁 ref 的回调，
+  // HMR 或整页重挂后 auth.js 的访客态变更会写到旧实例上。
+  delete window.__appGuestSession
   // 支付回调相关的 timer 与轮询均需清理，避免组件销毁后仍触发（修改已卸载的 ref）
   vipPollCancelled = true
   if (paymentToastTimer) clearTimeout(paymentToastTimer)
@@ -579,9 +584,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+/* 入场动画只做纵向位移：左下角全局 toast 本身没有水平位移类，
+   若 keyframe 里带 translateX(-50%)，每次弹出都会先横移半个自身宽度再瞬间跳回。
+   顶部居中 toast 的水平居中度由容器的 -translate-x-1/2 提供，动画挂在内层卡片上。 */
 @keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, -10px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .animate-toast-in {
   animation: toast-in 0.3s ease-out;
