@@ -339,17 +339,26 @@ class VideoDownloader:
         if os.path.exists(prepared):
             filepath = prepared
         else:
-            # 兜底：极少数情况下合并输出名与 prepare_filename 不一致，按视频 id 在目录内定位
-            _vid = info.get("id")
-            _candidates = [
-                os.path.join(self.DOWNLOAD_DIR, f)
+            # 兜底：极少数情况下合并输出名与 prepare_filename 不一致，按视频 id 在目录内定位。
+            # 只接受已完成文件：.part 是中断/并发下载留下的半截数据，拿它当结果会把
+            # 残缺视频返回给用户。优先精确匹配 outtmpl 的 "title [id].ext"，再退回
+            # id 子串匹配（避免 "12345" 命中 "912345" 这类别的视频），并排序保证稳定。
+            _vid = str(info.get("id") or "")
+            _files = [
+                f
                 for f in os.listdir(self.DOWNLOAD_DIR)
                 if os.path.isfile(os.path.join(self.DOWNLOAD_DIR, f))
-                and _vid
-                and _vid in f
+                and not f.endswith(".part")
             ]
+            _candidates = []
+            if _vid:
+                _candidates = [
+                    f
+                    for f in _files
+                    if re.search(r"\[" + re.escape(_vid) + r"\]\.[^.]+$", f)
+                ] or [f for f in _files if _vid in f]
             if _candidates:
-                filepath = _candidates[0]
+                filepath = os.path.join(self.DOWNLOAD_DIR, sorted(_candidates)[0])
             else:
                 raise FileNotFoundError("下载完成但未找到落盘文件")
 

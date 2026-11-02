@@ -12,6 +12,7 @@ import os
 import re
 import socket
 import time
+import uuid
 import logging
 from pathlib import Path
 from typing import Optional
@@ -436,7 +437,11 @@ class DouyinParser:
 
     def _download_file(self, url: str, filepath: Path, chunk_size: int = 64 * 1024):
         """下载文件到本地"""
-        temp_path = filepath.with_suffix(filepath.suffix + ".part")
+        # 临时文件名必须每次请求唯一：同名视频并发下载时若共用固定的
+        # "<name>.part"，后开始的 "wb" 会截断前者已写入的内容（各自 fd 的写偏移
+        # 还会在文件里留下空洞），且任一请求失败时的 unlink 会删掉另一个请求
+        # 正在写的文件，最终可能把半截文件 rename 成正式文件返回给用户。
+        temp_path = filepath.with_name(f"{filepath.name}.{uuid.uuid4().hex}.part")
         for attempt in range(self.max_retries):
             try:
                 current = url

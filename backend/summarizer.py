@@ -14,6 +14,7 @@ from openai import OpenAI
 
 
 _BILIBILI_SUFFIXES = ("bilibili.com", "b23.tv")
+_B23_SUFFIXES = ("b23.tv",)
 _DOUYIN_SUFFIXES = ("douyin.com", "iesdouyin.com")
 
 
@@ -180,9 +181,11 @@ class SubtitleExtractor:
             }
 
         if _is_bilibili_url(url):
-            result = self._extract_bilibili(url)
-            if result["has_subtitle"]:
-                return result
+            # 通用 yt-dlp 路径已被 B 站风控拦截（见 _get_video_info 注释，固定返回 412），
+            # _extract_bilibili 是唯一可用来源。没有字幕时必须直接返回「无字幕」，
+            # 否则会继续落到必然失败的通用路径，用户看到的是
+            # 「总结失败: HTTP Error 412」而不是清晰的「该视频没有可用的字幕」。
+            return self._extract_bilibili(url)
 
         info = self._get_video_info(url)
 
@@ -233,7 +236,10 @@ class SubtitleExtractor:
             "segments": [], "full_text": "",
         }
         try:
-            bvid = self._parse_bvid(url)
+            # b23.tv 短链里没有 BV 号：必须跟随跳转拿到真实视频页地址才能解析。
+            # 否则 _is_bilibili_url 已认定它是 B 站，这里却因取不到 bvid 直接返回
+            # 无字幕，B 站短链永远无法总结。
+            bvid = self._parse_bvid(url) or self._parse_bvid(self._resolve_b23_url(url))
             if not bvid:
                 return empty
 
@@ -314,6 +320,22 @@ class SubtitleExtractor:
     def _parse_bvid(url: str) -> Optional[str]:
         m = re.search(r"(BV[a-zA-Z0-9]+)", url)
         return m.group(1) if m else None
+
+    @staticmethod
+    def _resolve_b23_url(url: str) -> str:
+        """b23.tv 短链跟随跳转，返回重定向后的真实地址；失败返回空串。"""
+        if not _host_matches(url, _B23_SUFFIXES):
+            return ""
+        try:
+            resp = httpx.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=10,
+                follow_redirects=True,
+            )
+            return str(resp.url)
+        except Exception:
+            return ""
 
     def _get_video_info(self, url: str) -> dict:
         # P1 修复尝试（2026-08-25 实测无效）：b站 2026 年风控已升级到 wbi 签名 + cookie 双因子，
