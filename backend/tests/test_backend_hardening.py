@@ -75,13 +75,25 @@ def test_thumbnail_proxy_uses_sni_hostname():
 
     captured = {}
 
-    async def fake_get(self, url, headers=None, extensions=None, **kw):
-        captured.update(url=url, headers=headers, extensions=extensions)
-        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"img",
-                              request=httpx.Request("GET", url))
+    class _FakeStream:
+        def __init__(self, resp):
+            self._resp = resp
 
+        async def __aenter__(self):
+            return self._resp
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def fake_stream(self, method, url, headers=None, extensions=None, **kw):
+        captured.update(url=url, headers=headers, extensions=extensions)
+        return _FakeStream(httpx.Response(
+            200, headers={"content-type": "image/jpeg"}, content=b"img",
+            request=httpx.Request("GET", url)))
+
+    # 代理已改为 client.stream（边读边限量），mock 需挂在 stream 上。
     with mock.patch.object(main.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34")), \
-            mock.patch.object(httpx.AsyncClient, "get", fake_get):
+            mock.patch.object(httpx.AsyncClient, "stream", fake_stream):
         resp = TestClient(main.app).get("/api/proxy/thumbnail", params={"url": "https://img.example.com:8443/a.jpg"})
 
     assert resp.status_code == 200

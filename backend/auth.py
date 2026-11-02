@@ -66,12 +66,22 @@ def is_admin_user(user: dict | None) -> bool:
     return email in get_admin_emails()
 
 
+# bcrypt 只处理密码的前 72 字节，bcrypt 5.0 起对超长输入直接抛 ValueError，
+# 会冒泡成注册/登录 500。这里统一按 72 字节截断（与旧版 bcrypt 的隐式截断行为一致），
+# 既保证历史长密码仍能登录，也为 hash_password 兜底。
+_BCRYPT_MAX_BYTES = 72
+
+
+def _bcrypt_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_bcrypt_bytes(password), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    return bcrypt.checkpw(_bcrypt_bytes(password), hashed.encode())
 
 
 def create_token(user_id: int, email: str) -> str:
@@ -113,6 +123,10 @@ def validate_password(password: str) -> str | None:
         return "密码长度不能少于 6 位"
     if len(password) > 50:
         return "密码长度不能超过 50 位"
+    # 字符数达标不代表字节数达标：bcrypt 上限是 72 字节，中文/emoji 等
+    # 多字节字符会在 25~50 个字符时就越界，必须按 UTF-8 字节数再校验一次。
+    if len(password.encode("utf-8")) > _BCRYPT_MAX_BYTES:
+        return "密码过长：UTF-8 编码后不能超过 72 字节（中文约 24 个字符）"
     return None
 
 

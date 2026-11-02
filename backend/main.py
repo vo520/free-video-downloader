@@ -608,7 +608,10 @@ async def proxy_thumbnail(url: str = Query(..., description="缩略图URL")):
                 if parsed.query:
                     target += "?" + parsed.query
                 host_header = parsed.hostname + port
-                resp = await client.get(
+                # 必须用 stream 而非 get：get 会把整个响应体读进内存后才返回，
+                # 下面的 10MB 上限就形同虚设 —— 未认证接口可被超大图片直接打爆内存。
+                async with client.stream(
+                    "GET",
                     target,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -617,26 +620,26 @@ async def proxy_thumbnail(url: str = Query(..., description="缩略图URL")):
                     },
                     # HTTPS 用原主机名做 SNI 与证书校验，否则按 IP 校验证书必然失败
                     extensions={"sni_hostname": parsed.hostname},
-                )
-                if resp.status_code in _REDIRECT_STATUS and resp.headers.get("location"):
-                    current = urljoin(current, resp.headers["location"])
-                    continue
-                resp.raise_for_status()
-                content_type = resp.headers.get("content-type", "")
-                # 缺省不臆测为图片：必须显式声明的 image/* 才放行，避免代理回显任意内容（如内网 HTML/JSON）。
-                if not content_type.startswith("image/"):
-                    raise HTTPException(status_code=400, detail="缩略图格式不支持")
-                # 流式累加并限制最大体积，防止内存耗尽。
-                content = b""
-                async for chunk in resp.aiter_bytes(8192):
-                    content += chunk
-                    if len(content) > MAX_THUMBNAIL_BYTES:
-                        raise HTTPException(status_code=413, detail="缩略图体积过大")
-                return StreamingResponse(
-                    iter([content]),
-                    media_type=content_type,
-                    headers={"Cache-Control": "public, max-age=86400"},
-                )
+                ) as resp:
+                    if resp.status_code in _REDIRECT_STATUS and resp.headers.get("location"):
+                        current = urljoin(current, resp.headers["location"])
+                        continue
+                    resp.raise_for_status()
+                    content_type = resp.headers.get("content-type", "")
+                    # 缺省不臆测为图片：必须显式声明的 image/* 才放行，避免代理回显任意内容（如内网 HTML/JSON）。
+                    if not content_type.startswith("image/"):
+                        raise HTTPException(status_code=400, detail="缩略图格式不支持")
+                    # 边读边累加并在超限时立即中断，最多占用「上限 + 一个分片」的内存。
+                    content = b""
+                    async for chunk in resp.aiter_bytes(8192):
+                        content += chunk
+                        if len(content) > MAX_THUMBNAIL_BYTES:
+                            raise HTTPException(status_code=413, detail="缩略图体积过大")
+                    return StreamingResponse(
+                        iter([content]),
+                        media_type=content_type,
+                        headers={"Cache-Control": "public, max-age=86400"},
+                    )
             # 循环正常结束说明重定向次数超限
             raise HTTPException(status_code=400, detail="缩略图重定向链路过长")
     except HTTPException:
