@@ -35,20 +35,34 @@ def _enforce_quota(download_dir: str, limit: int = MAX_DOWNLOAD_DIR_BYTES) -> No
             return
         if not entries:
             return
-        total = sum(os.path.getsize(e) for e in entries)
+        # 逐个取 size/mtime：并发下载会在 listdir 之后把 .part rename 成正式文件
+        # （douyin / yt-dlp 都这么做）或删除文件，getsize/getmtime 抛 FileNotFoundError。
+        # 原实现直接 sum(getsize) + sort(getmtime)，一旦命中就让整个下载请求失败；
+        # 配额清理是 best-effort，跳过已消失的文件即可。
+        total = 0
+        sized = []
+        for e in entries:
+            try:
+                size = os.path.getsize(e)
+                mtime = os.path.getmtime(e)
+            except OSError:
+                continue
+            total += size
+            sized.append((e, size, mtime))
         if total <= limit:
             return
         # 排序键：(是否为 .part, mtime) —— 已完成文件优先删、更旧的优先；
         # .part 排最后，避免配额清理打断正在进行的并发下载。
-        entries.sort(key=lambda e: (1 if e.endswith(".part") else 0, os.path.getmtime(e)))
-        for e in entries:
+        sized.sort(key=lambda item: (1 if item[0].endswith(".part") else 0, item[2]))
+        for e, size, _mtime in sized:
             if total <= limit:
                 break
             try:
-                total -= os.path.getsize(e)
                 os.remove(e)
             except OSError:
-                pass
+                # 删除失败（已被并发删除/占用）时不扣减 size，继续尝试下一个
+                continue
+            total -= size
 
 
 def _find_ffmpeg_path() -> Optional[str]:

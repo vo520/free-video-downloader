@@ -6,20 +6,40 @@ import re
 import tempfile
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 import yt_dlp
 from openai import OpenAI
 
 
+_BILIBILI_SUFFIXES = ("bilibili.com", "b23.tv")
+_DOUYIN_SUFFIXES = ("douyin.com", "iesdouyin.com")
+
+
+def _host_matches(url: str, suffixes) -> bool:
+    """严格域名匹配（等于或为其子域），避免 URL 里出现子串就误判平台。
+
+    原实现用 `"douyin.com" in url` 判断：`https://douyin.com.evil.com/x`、
+    `https://mydouyin.com/x` 都会被当成抖音，走抖音专用解析（终点域名校验失败）
+    后直接返回「无字幕」，而本应交给 yt-dlp 通用流程；B 站同理，域名里只要
+    带 `bilibili.com` 且 URL 中恰好有 BV 号，就会拿到另一个视频的字幕。
+    口径与 douyin.py#_host_matches 保持一致。
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
 def _is_bilibili_url(url: str) -> bool:
-    return "bilibili.com" in url or "b23.tv" in url
+    return _host_matches(url, _BILIBILI_SUFFIXES)
 
 
 def _is_douyin_url(url: str) -> bool:
     """判断是否为抖音链接"""
-    douyin_domains = ["douyin.com", "iesdouyin.com", "v.douyin.com"]
-    return any(d in url for d in douyin_domains)
+    return _host_matches(url, _DOUYIN_SUFFIXES)
 
 
 def _parse_douyin_video_info(url: str) -> dict:
